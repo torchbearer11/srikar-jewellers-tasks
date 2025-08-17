@@ -40,19 +40,13 @@ const db = getFirestore(app);
 const tasksCollectionRef = collection(db, 'tasks');
 const usersCollectionRef = collection(db, 'users');
 
-// --- 2. GET DOM ELEMENTS ---
+// --- 2. GET LOGIN PAGE ELEMENTS ---
 const loginScreen = document.getElementById('login-screen');
 const appScreen = document.getElementById('app-screen');
 const loginButton = document.getElementById('login-button');
-const logoutButton = document.getElementById('logout-button');
 const loginEmail = document.getElementById('login-email');
 const loginPassword = document.getElementById('login-password');
 const loginError = document.getElementById('login-error');
-const addTaskButton = document.getElementById('add-task-button');
-const taskTitle = document.getElementById('task-title');
-const taskPriority = document.getElementById('task-priority');
-const taskAssignee = document.getElementById('task-assignee');
-const taskList = document.getElementById('task-list');
 
 // --- 3. AUTHENTICATION LOGIC ---
 loginButton.addEventListener('click', async () => {
@@ -67,46 +61,81 @@ loginButton.addEventListener('click', async () => {
     }
 });
 
-logoutButton.addEventListener('click', () => {
-    signOut(auth);
-});
-
-// MODIFIED: Added robust error handling inside the listener
 onAuthStateChanged(auth, async (user) => {
-    try {
-        if (user) {
-            loginScreen.classList.add('hidden');
-            appScreen.classList.remove('hidden');
-            loginEmail.value = '';
-            loginPassword.value = '';
-            
-            await saveUserProfile(user);
-            const userRole = await getUserRole(user.uid);
+    if (user) {
+        // User is logged in, now we can safely find and set up the app elements
+        loginScreen.classList.add('hidden');
+        appScreen.classList.remove('hidden');
+        loginEmail.value = '';
+        loginPassword.value = '';
 
-            populateUsersDropdown();
-            loadTasks(user, userRole);
-        } else {
-            loginScreen.classList.remove('hidden');
-            appScreen.classList.add('hidden');
-            taskList.innerHTML = '';
-        }
-    } catch (error) {
-        // NEW: This block will catch any error that happens after login
-        console.error("Error during dashboard loading:", error);
-        loginError.textContent = `Error loading dashboard: ${error.message}`;
-        loginScreen.classList.remove('hidden'); // Show the login screen again
+        // Safely set up the dashboard now that it's visible
+        setupDashboard(user);
+        
+    } else {
+        // User is logged out
+        loginScreen.classList.remove('hidden');
         appScreen.classList.add('hidden');
-        signOut(auth); // Log the user out to allow another attempt
     }
 });
 
-// --- 4. USER MANAGEMENT ---
+// --- 4. SETUP DASHBOARD (NEW FUNCTION) ---
+// This function runs ONLY after a successful login.
+const setupDashboard = (user) => {
+    // Get dashboard elements now, when we know they exist.
+    const logoutButton = document.getElementById('logout-button');
+    const addTaskButton = document.getElementById('add-task-button');
+    
+    // Attach event listeners
+    logoutButton.addEventListener('click', () => signOut(auth));
+    
+    addTaskButton.addEventListener('click', async () => {
+        const taskTitle = document.getElementById('task-title');
+        const taskPriority = document.getElementById('task-priority');
+        const taskAssignee = document.getElementById('task-assignee');
+        
+        const title = taskTitle.value.trim();
+        const priority = taskPriority.value;
+        const assigneeUid = taskAssignee.value;
+        const selectedOption = taskAssignee.options[taskAssignee.selectedIndex];
+        const assigneeEmail = selectedOption.dataset.email;
+
+        if (title && assigneeUid) {
+            await addDoc(tasksCollectionRef, {
+                title, priority, status: 'pending', createdAt: serverTimestamp(),
+                assignedToUID: assigneeUid, assignedToEmail: assigneeEmail
+            });
+            taskTitle.value = '';
+            taskAssignee.value = '';
+        } else {
+            alert('Please provide a task title and select an assignee.');
+        }
+    });
+
+    // Load user data and tasks
+    loadUserDataAndTasks(user);
+};
+
+// --- 5. DATA LOADING FUNCTIONS ---
+const loadUserDataAndTasks = async (user) => {
+    try {
+        await saveUserProfile(user);
+        const userRole = await getUserRole(user.uid);
+        populateUsersDropdown();
+        loadTasks(user, userRole);
+    } catch (error) {
+        console.error("Error loading user data:", error);
+        alert(`An error occurred: ${error.message}`);
+    }
+};
+
 const saveUserProfile = async (user) => {
     const userDocRef = doc(db, 'users', user.uid);
     await setDoc(userDocRef, { uid: user.uid, email: user.email }, { merge: true });
 };
 
 const populateUsersDropdown = () => {
+    const taskAssignee = document.getElementById('task-assignee');
     onSnapshot(usersCollectionRef, (snapshot) => {
         taskAssignee.innerHTML = '<option value="">Select Staff Member...</option>';
         snapshot.forEach((doc) => {
@@ -123,43 +152,18 @@ const populateUsersDropdown = () => {
 const getUserRole = async (uid) => {
     const userDocRef = doc(db, 'users', uid);
     const docSnap = await getDoc(userDocRef);
-    if (!docSnap.exists()) {
-        throw new Error("User profile not found in database.");
-    }
+    if (!docSnap.exists()) throw new Error("User profile not found in database.");
     return (docSnap.data().role) ? docSnap.data().role : 'staff';
 };
 
-// --- 5. TASK MANAGEMENT (CRUD) ---
-addTaskButton.addEventListener('click', async () => {
-    const title = taskTitle.value.trim();
-    const priority = taskPriority.value;
-    const assigneeUid = taskAssignee.value;
-    const selectedOption = taskAssignee.options[taskAssignee.selectedIndex];
-    const assigneeEmail = selectedOption.dataset.email;
-
-    if (title && assigneeUid) {
-        await addDoc(tasksCollectionRef, {
-            title: title, priority: priority, status: 'pending', createdAt: serverTimestamp(),
-            assignedToUID: assigneeUid, assignedToEmail: assigneeEmail
-        });
-        taskTitle.value = '';
-        taskAssignee.value = '';
-    } else {
-        alert('Please provide a task title and select an assignee.');
-    }
-});
-
 const loadTasks = (user, userRole) => {
-    let q = (userRole === 'admin')
+    const taskList = document.getElementById('task-list');
+    const q = (userRole === 'admin')
         ? query(tasksCollectionRef, orderBy('createdAt', 'desc'))
         : query(tasksCollectionRef, where('assignedToUID', '==', user.uid), orderBy('deadline', 'asc'));
 
     onSnapshot(q, (snapshot) => {
-        if (snapshot.empty) {
-            taskList.innerHTML = `<p style="text-align:center;">No tasks found.</p>`;
-            return;
-        }
-        taskList.innerHTML = '';
+        taskList.innerHTML = snapshot.empty ? `<p style="text-align:center;">No tasks found.</p>` : '';
         snapshot.forEach((docSnap) => {
             const task = docSnap.data();
             const taskId = docSnap.id;
@@ -182,7 +186,6 @@ const loadTasks = (user, userRole) => {
             taskList.appendChild(taskElement);
         });
     }, (error) => {
-        // NEW: This specifically catches errors from the task listener
         console.error("Error in task listener:", error);
         alert(`A database error occurred: ${error.message}`);
     });
