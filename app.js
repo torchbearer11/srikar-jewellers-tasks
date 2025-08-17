@@ -1,71 +1,559 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Srikar Jewellers - Staff System</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --gold-primary: #DCCA87; --gold-secondary: #F5EFE1; --dark-bg: #0C0C0C; --dark-secondary: #181818;
-            --text-primary: #FFFFFF; --text-secondary: #AAAAAA; --priority-high: #d9534f; --priority-medium: #f0ad4e;
-            --priority-low: #5cb85c; --transition-fast: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+
+// --- 1. CONFIGURATION ---
+const firebaseConfig = {
+    apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
+    authDomain: "srikar-jewellers-crm.firebaseapp.com",
+    projectId: "srikar-jewellers-crm",
+    storageBucket: "srikar-jewellers-crm.firebasestorage.app",
+    messagingSenderId: "377625912262",
+    appId: "1:377625912262:web:d6d05bec0d817e211b48c7",
+    measurementId: "G-06K93QM4V4"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appRoot = document.getElementById('app-root');
+let currentView = '';
+
+// --- 2. HTML TEMPLATES ---
+const loginTemplate = `
+<div class="login-container">
+    <div class="login-box">
+        <img src="logo.jpeg" alt="Srikar Jewellers Logo" class="logo">
+        <h1 class="login-title">Srikar Jewellers</h1><p class="login-subtitle">Staff Portal</p>
+        <div class="form-group"><label for="login-email">Email Address</label><input type="email" id="login-email"></div>
+        <div class="form-group"><label for="login-password">Password</label><input type="password" id="login-password"></div>
+        <button id="login-button" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Secure Login</button>
+        <p id="login-error"></p>
+    </div>
+</div>`;
+
+const adminTemplate = (userData) => `
+<div class="app-container">
+    <div class="main-container">
+        <header class="header">
+            <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
+            <nav>
+                <button class="nav-btn active" data-view="admin-dashboard">Dashboard</button>
+                <button class="nav-btn" data-view="admin-performance">Performance</button>
+                <button id="logout-btn" class="btn btn-danger">Logout</button>
+            </nav>
+        </header>
+        <main class="content-area">
+            <div id="admin-dashboard-view" class="view active">
+                <div class="premium-card">
+                    <h2 class="section-title">Assign New Task</h2>
+                    <form id="assign-task-form" class="form-grid">
+                        <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
+                        <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
+                        <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
+                        <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
+                    </form>
+                    <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
+                </div>
+                <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
+            </div>
+            <div id="admin-performance-view" class="view">
+                <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"></div></div>
+            </div>
+        </main>
+    </div>
+</div>`;
+
+const staffTemplate = (userData) => `
+<div class="app-container">
+    <div class="main-container">
+        <header class="header">
+            <div class="header-text"><h1>Staff Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
+            <nav>
+                <button class="nav-btn active" data-view="staff-tasks">My Tasks</button>
+                <button class="nav-btn" data-view="staff-attendance">Attendance</button>
+                <button id="logout-btn" class="btn btn-danger">Logout</button>
+            </nav>
+        </header>
+        <main class="content-area">
+            <div id="staff-tasks-view" class="view active">
+                <div class="premium-card"><h2 class="section-title">My Tasks</h2><div id="staff-task-list"></div></div>
+            </div>
+            <div id="staff-attendance-view" class="view">
+                <div class="premium-card">
+                    <h2 class="section-title">My Attendance</h2>
+                    <div class="attendance-controls">
+                        <button id="clock-in-btn" class="btn btn-primary">Clock In</button>
+                        <button id="clock-out-btn" class="btn btn-danger hidden">Clock Out</button>
+                        <div class="break-buttons">
+                            <button id="lunch-out-btn" class="btn btn-secondary disabled">Lunch Out</button>
+                            <button id="lunch-in-btn" class="btn btn-secondary hidden">Lunch In</button>
+                            <button id="snack-out-btn" class="btn btn-secondary disabled">Snack Out</button>
+                            <button id="snack-in-btn" class="btn btn-secondary hidden">Snack In</button>
+                        </div>
+                    </div>
+                    <div id="attendance-status-grid" class="stats-grid"></div>
+                </div>
+                <div class="premium-card"><h2 class="section-title">My Time Averages (Last 30 Days)</h2><div id="attendance-avg-grid" class="stats-grid"></div></div>
+            </div>
+        </main>
+    </div>
+</div>`;
+
+// --- 3. CORE APP LOGIC ---
+onAuthStateChanged(auth, async (user) => {
+    if (user) {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+            const userData = userDoc.data();
+            if (userData.role === 'admin') {
+                renderAdminDashboard(userData);
+            } else {
+                renderStaffDashboard(userData);
+            }
+        } else {
+            renderStaffDashboard({ name: user.displayName, email: user.email });
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Poppins', sans-serif; background-color: var(--dark-bg); color: var(--text-secondary); min-height: 100vh; }
-        .hidden { display: none !important; }
-        .active { display: block !important; }
-        .login-container, .app-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-        .login-box { width: 100%; max-width: 450px; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 15px; padding: 3rem; text-align: center; animation: fadeIn 0.5s ease-out; }
-        .logo { width: 90px; height: 90px; border-radius: 50%; border: 3px solid var(--gold-primary); box-shadow: 0 0 25px rgba(220, 202, 135, 0.2); margin: 0 auto 1rem auto; object-fit: cover; }
-        .login-title { font-family: 'Cormorant Garamond', serif; font-size: 3rem; color: var(--gold-primary); }
-        .login-subtitle { margin-bottom: 2.5rem; font-size: 1.1rem; }
-        #login-error { color: var(--priority-high); margin-top: 1rem; min-height: 1.2em; }
-        .main-container { width: 100%; max-width: 1200px; margin: 2rem auto; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 20px; overflow: hidden; animation: fadeIn 0.5s ease-out; }
-        .header { padding: 2.5rem; background: #111111; border-bottom: 1px solid rgba(220, 202, 135, 0.15); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
-        .header-text h1 { font-family: 'Cormorant Garamond', serif; font-size: 2.5rem; color: var(--gold-primary); }
-        nav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        .nav-btn { background: transparent; color: var(--gold-primary); padding: 0.6rem 1rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: var(--transition-fast); }
-        .nav-btn:hover, .nav-btn.active { background: var(--gold-primary); color: var(--dark-bg); }
-        .content-area { padding: 2.5rem; }
-        .view { display: none; }
-        .view.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .section-title { font-family: 'Cormorant Garamond', serif; font-size: 2.2rem; color: var(--gold-primary); margin-bottom: 2rem; text-align: center; }
-        .premium-card { background: #111111; border: 1px solid rgba(220, 202, 135, 0.1); border-radius: 15px; padding: 2rem; margin-bottom: 2.5rem; }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; }
-        .form-group { display: flex; flex-direction: column; text-align: left; }
-        .form-group label { margin-bottom: 0.75rem; font-weight: 500; color: var(--gold-secondary); font-size: 0.9rem; text-transform: uppercase; }
-        .form-group input, .form-group select { width: 100%; padding: 0.8rem 1rem; border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 8px; font-size: 1rem; font-family: 'Poppins', sans-serif; background: var(--dark-secondary); color: var(--text-primary); transition: var(--transition-fast); }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--gold-primary); }
-        .form-group input[type="checkbox"] { width: auto; margin-right: 10px; }
-        .btn { padding: 0.8rem 1.8rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; text-transform: uppercase; transition: var(--transition-fast); display: inline-flex; align-items: center; gap: 0.75rem; justify-content: center; }
-        .btn-primary { background: var(--gold-primary); color: var(--dark-bg); }
-        .btn-danger { background: var(--priority-high); color: white; border-color: var(--priority-high); }
-        .btn-secondary { background: transparent; color: var(--gold-primary); }
-        .btn:disabled { background: #333; border-color: #444; color: #777; cursor: not-allowed; }
-        .task-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.2rem 1rem; background: #1C1C1C; border-radius: 8px; margin-bottom: 1rem; border-left: 5px solid var(--text-secondary); }
-        .task-status-selector { background: var(--dark-secondary); color: var(--text-primary); border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 5px; padding: 5px; font-family: 'Poppins', sans-serif; font-size: 0.9rem;}
-        .task-item.Urgent { border-left-color: var(--priority-high); }
-        .task-item.Important { border-left-color: var(--priority-medium); }
-        .task-item.Not-Important { border-left-color: var(--priority-low); }
-        .task-title { font-weight: 600; color: var(--text-primary); }
-        .role { font-weight: 600; text-transform: capitalize; }
-        .attendance-controls { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 2rem; }
-        .break-buttons { display: flex; gap: 10px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 2.5rem; }
-        .stat-card { background: #111; padding: 25px; border-radius: 15px; text-align: center; border-top: 3px solid var(--gold-primary); }
-        .stat-card h3 { font-family: 'Cormorant Garamond', serif; color: var(--gold-secondary); margin-bottom: 10px; font-size: 1.2rem; }
-        .stat-number { font-size: 2.5rem; font-weight: bold; color: var(--text-primary); display: block; margin-top: 10px; }
-        .performance-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
-        .performance-table th, .performance-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid rgba(220, 202, 135, 0.1); }
-        .performance-table th { color: var(--gold-primary); text-transform: uppercase; }
-        .performance-table .rank { font-weight: bold; font-size: 1.2rem; color: var(--gold-primary); }
-    </style>
-</head>
-<body>
-    <div id="app-root"></div>
-    <script type="module" src="app.js"></script>
-</body>
-</html>
+    } else {
+        renderLoginPage();
+    }
+});
+
+function attachGlobalListeners() {
+    appRoot.addEventListener('click', (event) => {
+        if (event.target && event.target.id === 'logout-btn') signOut(auth);
+        if (event.target && event.target.id === 'login-button') handleLogin();
+        if (event.target && event.target.id === 'assign-task-button') handleAssignTask();
+        
+        // Navigation buttons
+        if (event.target && event.target.classList.contains('nav-btn')) {
+            handleNavigation(event.target);
+        }
+        
+        // Attendance buttons
+        if (event.target && event.target.id === 'clock-in-btn') handleClockIn();
+        if (event.target && event.target.id === 'clock-out-btn') handleClockOut();
+        if (event.target && event.target.id === 'lunch-out-btn') handleLunchOut();
+        if (event.target && event.target.id === 'lunch-in-btn') handleLunchIn();
+        if (event.target && event.target.id === 'snack-out-btn') handleSnackOut();
+        if (event.target && event.target.id === 'snack-in-btn') handleSnackIn();
+    });
+    
+    appRoot.addEventListener('change', (event) => {
+        if (event.target && event.target.classList.contains('task-status-selector')) {
+            handleStatusChange(event.target.dataset.taskid, event.target.value);
+        }
+    });
+    
+    appRoot.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter' && event.target.id === 'login-password') {
+            handleLogin();
+        }
+    });
+}
+
+attachGlobalListeners();
+
+// --- 4. RENDER FUNCTIONS ---
+function renderLoginPage() {
+    appRoot.innerHTML = loginTemplate;
+}
+
+function renderAdminDashboard(userData) {
+    appRoot.innerHTML = adminTemplate(userData);
+    populateStaffDropdown();
+    loadAdminTasks();
+    currentView = 'admin-dashboard';
+}
+
+function renderStaffDashboard(userData) {
+    appRoot.innerHTML = staffTemplate(userData);
+    loadStaffTasks(auth.currentUser);
+    currentView = 'staff-tasks';
+}
+
+function handleNavigation(button) {
+    // Remove active class from all nav buttons
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+    button.classList.add('active');
+    
+    // Hide all views
+    document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
+    
+    // Show selected view
+    const viewId = button.dataset.view;
+    document.getElementById(viewId + '-view').classList.add('active');
+    currentView = viewId;
+    
+    // Load specific content based on view
+    if (viewId === 'admin-performance') {
+        renderPerformanceDashboard();
+    } else if (viewId === 'staff-attendance') {
+        setupAttendancePage();
+    }
+}
+
+// --- 5. EVENT HANDLERS & LOGIC ---
+async function handleLogin() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const errorEl = document.getElementById('login-error');
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+        errorEl.textContent = 'Invalid email or password.';
+    }
+}
+
+async function handleAssignTask() {
+    const assigneeSelectEl = document.getElementById('task-assignee');
+    const deadlineInput = document.getElementById('task-deadline');
+    const taskData = {
+        title: document.getElementById('task-title').value.trim(),
+        assignedToUID: assigneeSelectEl.value,
+        assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
+        priority: document.getElementById('task-priority').value,
+        status: 'Pending',
+        createdAt: serverTimestamp(),
+        deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
+    };
+    
+    if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
+    
+    try {
+        await addDoc(collection(db, 'tasks'), taskData);
+        alert('Task assigned successfully!');
+        document.getElementById('assign-task-form').reset();
+    } catch (error) {
+        console.error('Error assigning task:', error);
+        alert('Error assigning task. Please try again.');
+    }
+}
+
+function handleStatusChange(taskId, newStatus) {
+    const taskRef = doc(db, 'tasks', taskId);
+    const updateData = { status: newStatus };
+    
+    if (newStatus === 'In Progress' && !updateData.startedAt) updateData.startedAt = serverTimestamp();
+    if (newStatus === 'Completed' && !updateData.completedAt) updateData.completedAt = serverTimestamp();
+    
+    updateDoc(taskRef, updateData);
+}
+
+function populateStaffDropdown() {
+    const assigneeSelect = document.getElementById('task-assignee');
+    onSnapshot(collection(db, 'users'), snapshot => {
+        assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
+        snapshot.forEach(doc => {
+            if (doc.data().role !== 'admin') {
+                assigneeSelect.innerHTML += `<option value="${doc.id}">${doc.data().name || doc.data().email}</option>`;
+            }
+        });
+    });
+}
+
+function loadAdminTasks() {
+    const adminTaskList = document.getElementById('admin-task-list');
+    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('status'), orderBy('createdAt', 'desc'));
+    onSnapshot(q, snapshot => {
+        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
+        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
+    });
+}
+
+function loadStaffTasks(user) {
+    const staffTaskList = document.getElementById('staff-task-list');
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid));
+    
+    onSnapshot(q, snapshot => {
+        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
+        const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        tasks.sort((a, b) => (a.createdAt > b.createdAt) ? -1 : 1);
+        tasks.forEach(task => renderTaskItem(staffTaskList, task, 'staff'));
+    });
+}
+
+function renderTaskItem(container, task, role) {
+    const item = document.createElement('div');
+    item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
+    const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
+    const statusOptions = ['Pending', 'In Progress', 'Completed'];
+    
+    let actionsHtml = (role === 'staff')
+        ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
+        : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
+    
+    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
+    container.appendChild(item);
+}
+
+// --- 6. ATTENDANCE FUNCTIONS ---
+async function handleClockIn() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { clockIn: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error clocking in:', error);
+        alert('Error clocking in. Please try again.');
+    }
+}
+
+async function handleClockOut() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { clockOut: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error clocking out:', error);
+        alert('Error clocking out. Please try again.');
+    }
+}
+
+async function handleLunchOut() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { lunchOut: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error marking lunch out:', error);
+        alert('Error marking lunch out. Please try again.');
+    }
+}
+
+async function handleLunchIn() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { lunchIn: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error marking lunch in:', error);
+        alert('Error marking lunch in. Please try again.');
+    }
+}
+
+async function handleSnackOut() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { snackOut: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error marking snack out:', error);
+        alert('Error marking snack out. Please try again.');
+    }
+}
+
+async function handleSnackIn() {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    try {
+        await setDoc(attendanceDocRef, { snackIn: serverTimestamp() }, { merge: true });
+    } catch (error) {
+        console.error('Error marking snack in:', error);
+        alert('Error marking snack in. Please try again.');
+    }
+}
+
+function setupAttendancePage() {
+    if (currentView !== 'staff-attendance') return;
+    
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
+    
+    const buttons = {
+        clockIn: document.getElementById('clock-in-btn'), 
+        clockOut: document.getElementById('clock-out-btn'),
+        lunchOut: document.getElementById('lunch-out-btn'), 
+        lunchIn: document.getElementById('lunch-in-btn'),
+        snackOut: document.getElementById('snack-out-btn'), 
+        snackIn: document.getElementById('snack-in-btn')
+    };
+
+    // Real-time attendance status updates
+    const grid = document.getElementById('attendance-status-grid');
+    onSnapshot(attendanceDocRef, (docSnap) => {
+        const data = docSnap.exists() ? docSnap.data() : {};
+        const format = (ts) => ts ? ts.toDate().toLocaleTimeString('en-IN') : '--';
+        
+        grid.innerHTML = `
+            <div class="stat-card"><h3>Clock In</h3><span class="stat-number">${format(data.clockIn)}</span></div>
+            <div class="stat-card"><h3>Lunch Out</h3><span class="stat-number">${format(data.lunchOut)}</span></div>
+            <div class="stat-card"><h3>Lunch In</h3><span class="stat-number">${format(data.lunchIn)}</span></div>
+            <div class="stat-card"><h3>Snack Out</h3><span class="stat-number">${format(data.snackOut)}</span></div>
+            <div class="stat-card"><h3>Snack In</h3><span class="stat-number">${format(data.snackIn)}</span></div>
+            <div class="stat-card"><h3>Clock Out</h3><span class="stat-number">${format(data.clockOut)}</span></div>`;
+        
+        // Button visibility logic
+        if (buttons.clockIn) buttons.clockIn.style.display = data.clockIn ? 'none' : 'inline-flex';
+        if (buttons.clockOut) buttons.clockOut.style.display = (!data.clockIn || data.clockOut) ? 'none' : 'inline-flex';
+        
+        // Disable break buttons if not clocked in or already clocked out
+        [buttons.lunchOut, buttons.snackOut].forEach(b => {
+            if (b) {
+                b.disabled = !data.clockIn || !!data.clockOut;
+                b.classList.toggle('disabled', !data.clockIn || !!data.clockOut);
+            }
+        });
+        
+        // Lunch button visibility
+        if (buttons.lunchOut) buttons.lunchOut.style.display = data.lunchOut ? 'none' : 'inline-flex';
+        if (buttons.lunchIn) buttons.lunchIn.style.display = (!data.lunchOut || data.lunchIn) ? 'none' : 'inline-flex';
+        
+        // Snack button visibility
+        if (buttons.snackOut) buttons.snackOut.style.display = data.snackOut ? 'none' : 'inline-flex';
+        if (buttons.snackIn) buttons.snackIn.style.display = (!data.snackOut || data.snackIn) ? 'none' : 'inline-flex';
+    });
+    
+    calculateAvgTimes();
+}
+
+async function calculateAvgTimes() {
+    if (currentView !== 'staff-attendance') return;
+    
+    try {
+        const avgGrid = document.getElementById('attendance-avg-grid');
+        if (!avgGrid) return;
+        
+        const q = query(collection(db, 'users', auth.currentUser.uid, 'attendance'), limit(30));
+        const snapshot = await getDocs(q);
+        let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
+        
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.lunchIn && data.lunchOut) {
+                totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
+                lunchCount++;
+            }
+            if (data.snackIn && data.snackOut) {
+                totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
+                snackCount++;
+            }
+        });
+        
+        const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 0;
+        const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 0;
+        
+        avgGrid.innerHTML = `
+            <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
+            <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
+    } catch (error) {
+        console.error('Error calculating average times:', error);
+    }
+}
+
+// --- 7. PERFORMANCE DASHBOARD ---
+async function renderPerformanceDashboard() {
+    if (currentView !== 'admin-performance') return;
+    
+    try {
+        const container = document.getElementById('performance-table-container');
+        if (!container) return;
+        
+        container.innerHTML = `<p>Calculating performance metrics...</p>`;
+        
+        const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
+        const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
+        const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
+
+        let performanceData = [];
+        
+        for (const userDoc of usersSnapshot.docs) {
+            const user = userDoc.data();
+            const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
+            
+            const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
+            const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
+            
+            // Calculate attendance averages
+            const attendanceQuery = query(collection(db, 'users', user.uid, 'attendance'), limit(30));
+            const attendanceSnapshot = await getDocs(attendanceQuery);
+            
+            let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
+            let inTimeSum = 0, inTimeCount = 0;
+            
+            attendanceSnapshot.forEach(doc => {
+                const data = doc.data();
+                
+                // Calculate lunch and snack averages
+                if (data.lunchIn && data.lunchOut) {
+                    totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
+                    lunchCount++;
+                }
+                if (data.snackIn && data.snackOut) {
+                    totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
+                    snackCount++;
+                }
+                
+                // Calculate average in-time (clock-in time)
+                if (data.clockIn) {
+                    const clockInTime = data.clockIn.toDate();
+                    const hours = clockInTime.getHours();
+                    const minutes = clockInTime.getMinutes();
+                    const timeInMinutes = hours * 60 + minutes;
+                    inTimeSum += timeInMinutes;
+                    inTimeCount++;
+                }
+            });
+            
+            const avgLunchTime = lunchCount ? (totalLunchMins / lunchCount) : 0;
+            const avgSnackTime = snackCount ? (totalSnackMins / snackCount) : 0;
+            const avgInTime = inTimeCount ? (inTimeSum / inTimeCount) : 0;
+            
+            // Convert average in-time back to readable format
+            const avgInHours = Math.floor(avgInTime / 60);
+            const avgInMins = Math.round(avgInTime % 60);
+            const avgInTimeFormatted = inTimeCount ? `${avgInHours.toString().padStart(2, '0')}:${avgInMins.toString().padStart(2, '0')}` : '--';
+            
+            // Scoring system
+            const punctualityBonus = inTimeCount > 0 && avgInTime <= 540 ? 5 : 0; // Bonus for being on time (9 AM = 540 minutes)
+            const score = (userTasks.length * 10) - avgCompletionHours + punctualityBonus;
+            
+            performanceData.push({
+                name: user.name || user.email,
+                tasksCompleted: userTasks.length,
+                avgTime: avgCompletionHours.toFixed(2),
+                avgLunchTime: avgLunchTime.toFixed(0),
+                avgSnackTime: avgSnackTime.toFixed(0),
+                avgInTime: avgInTimeFormatted,
+                score
+            });
+        }
+
+        performanceData.sort((a, b) => b.score - a.score);
+
+        container.innerHTML = `
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Staff Name</th>
+                        <th>Tasks Completed</th>
+                        <th>Avg. Completion (Hours)</th>
+                        <th>Avg. Lunch Time (Min)</th>
+                        <th>Avg. Snack Time (Min)</th>
+                        <th>Avg. In-Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${performanceData.length === 0 ? '<tr><td colspan="7">No completed tasks with performance data yet.</td></tr>' : 
+                      performanceData.map((p, index) => `
+                        <tr>
+                            <td class="rank">#${index + 1}</td>
+                            <td>${p.name}</td>
+                            <td>${p.tasksCompleted}</td>
+                            <td>${p.avgTime}</td>
+                            <td>${p.avgLunchTime}</td>
+                            <td>${p.avgSnackTime}</td>
+                            <td>${p.avgInTime}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>`;
+    } catch (error) {
+        console.error('Error rendering performance dashboard:', error);
+        const container = document.getElementById('performance-table-container');
+        if (container) {
+            container.innerHTML = `<p>Error loading performance data. Please try again.</p>`;
+        }
+    }
+}
