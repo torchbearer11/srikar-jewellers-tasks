@@ -62,16 +62,18 @@ body { font-family: 'Poppins', sans-serif; background-color: var(--dark-bg); col
 
 /* --- Task List --- */
 .task-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.2rem 1rem; background: #1C1C1C; border-radius: 8px; margin-bottom: 1rem; border-left: 5px solid var(--text-secondary); }
-.task-status-selector { background: var(--dark-secondary); color: var(--text-primary); border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 5px; padding: 5px; }
+.task-status-selector { background: var(--dark-secondary); color: var(--text-primary); border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 5px; padding: 5px; font-family: 'Poppins', sans-serif; font-size: 0.9rem;}
 .task-item.Urgent { border-left-color: var(--priority-high); }
 .task-item.Important { border-left-color: var(--priority-medium); }
 .task-item.Not-Important { border-left-color: var(--priority-low); }
+.task-title { font-weight: 600; color: var(--text-primary); }
+.role { font-weight: 600; text-transform: capitalize; }
 
 /* --- Attendance --- */
 .attendance-controls { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 2rem; }
 .break-buttons { display: flex; gap: 10px; }
-#attendance-status-grid .stat-card { border-top-color: var(--priority-low); }
-#attendance-status-grid .stat-number { font-size: 1.8rem; }
+#attendance-status-grid .stat-card, #attendance-avg-grid .stat-card { border-top-color: var(--priority-low); }
+#attendance-status-grid .stat-number, #attendance-avg-grid .stat-number { font-size: 1.8rem; }
 
 /* --- Performance Table --- */
 .performance-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
@@ -84,6 +86,6 @@ body { font-family: 'Poppins', sans-serif; background-color: var(--dark-bg); col
 .notification-dot { position: absolute; top: 0; right: 0; width: 8px; height: 8px; background: var(--priority-high); border-radius: 50%; display: none; }
 .notification-dot.visible { display: block; }
 #notification-panel { position: absolute; top: 80px; right: 20px; width: 350px; max-height: 400px; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow-y: auto; z-index: 1001; }
-.notification-item { padding: 15px; border-bottom: 1px solid rgba(220, 202, 135, 0.1); cursor: pointer; }
-.notification-item:hover { background: #111; }
+.notification-item { padding: 15px; border-bottom: 1px solid rgba(220, 202, 135, 0.1); }
+.notification-item:last-child { border-bottom: none; }
 .notification-item.unread { background: #1c1c1c; font-weight: bold; }
