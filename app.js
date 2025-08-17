@@ -1,7 +1,7 @@
 // --- 1. INITIALIZE FIREBASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, writeBatch, updateDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, writeBatch, updateDoc, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
@@ -12,7 +12,6 @@ const firebaseConfig = {
     appId: "1:377625912262:web:d6d05bec0d817e211b48c7",
     measurementId: "G-06K93QM4V4"
 };
-
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -30,7 +29,7 @@ const loginError = document.getElementById('login-error');
 
 // --- PAGE NAVIGATION ---
 const showView = (viewId) => {
-    appPage.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    appPage.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(viewId)?.classList.add('active');
 };
 
@@ -40,7 +39,7 @@ onAuthStateChanged(auth, async (user) => {
         currentUser = user;
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
-            currentUser.displayName = userDoc.data().name; // Add name to user object
+            currentUser.displayName = userDoc.data().name;
             currentUserRole = userDoc.data().role || 'staff';
         }
         loginPage.classList.remove('active');
@@ -115,7 +114,7 @@ const initializeAdminDashboard = () => {
             status: 'Pending',
             createdAt: serverTimestamp()
         };
-        if (!task.title || !task.assignedToUID) return alert('Title and Assignee are required.');
+        if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) return alert('Title, Assignee, and Deadline are required.');
         
         const taskRef = await addDoc(collection(db, 'tasks'), task);
         
@@ -141,7 +140,7 @@ const initializeAdminDashboard = () => {
 
     const adminTaskList = document.getElementById('admin-task-list');
     onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
-        adminTaskList.innerHTML = '';
+        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
         snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }));
     });
     
@@ -153,7 +152,7 @@ const initializeStaffDashboard = () => {
     const staffTaskList = document.getElementById('staff-task-list');
     const q = query(collection(db, 'tasks'), where('assignedToUID', '==', currentUser.uid), orderBy('deadline', 'asc'));
     onSnapshot(q, snapshot => {
-        staffTaskList.innerHTML = '<h3>My Active Tasks</h3>';
+        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
         snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
     });
     
@@ -294,7 +293,6 @@ const calculateAvgTimes = async () => {
         <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
 };
 
-
 // --- RECURRING TASKS ---
 const checkAndCreateRecurringTasks = async () => {
     const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
@@ -308,19 +306,20 @@ const checkAndCreateRecurringTasks = async () => {
     snapshot.forEach(doc => {
         const task = doc.data();
         const newDeadline = new Date();
-        newDeadline.setDate(newDeadline.getDate() + 1); // Set deadline for tomorrow
+        newDeadline.setHours(23, 59, 59, 999); // End of today
         
         const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
         delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
         
         const newTaskRef = doc(collection(db, 'tasks'));
         batch.set(newTaskRef, newTask);
-        batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring
+        batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
     });
     
-    await batch.commit();
+    if (!snapshot.empty) await batch.commit();
     localStorage.setItem('lastRecurringTaskCheck', today);
 };
+
 
 // --- PERFORMANCE DASHBOARD (ADMIN) ---
 const renderPerformanceDashboard = async () => {
@@ -334,9 +333,9 @@ const renderPerformanceDashboard = async () => {
     let performanceData = [];
     for (const userDoc of usersSnapshot.docs) {
         const user = userDoc.data();
-        const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt);
+        const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
         
-        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // hours
+        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
         const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
         
         // Simplified scoring: more tasks = better, less time = better
