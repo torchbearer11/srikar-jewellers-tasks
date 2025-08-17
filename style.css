@@ -47,7 +47,6 @@ body {
     text-align: center;
 }
 
-/* NEW: Logo styling */
 .logo {
     width: 90px;
     height: 90px;
@@ -254,12 +253,4 @@ body {
 
 .task-assignee-info i {
     margin-right: 0.5rem;
-}
-/* ... (all the previous CSS code) ... */
-
-/* ADD THIS NEW STYLE at the end of the file */
-.form-grid-tri {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1.5rem;
 }
