@@ -1,8 +1,8 @@
+// --- 1. INITIALIZE FIREBASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, writeBatch, updateDoc, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
-// --- 1. CONFIGURATION ---
 const firebaseConfig = {
     apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
     authDomain: "srikar-jewellers-crm.firebaseapp.com",
@@ -16,187 +16,354 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appRoot = document.getElementById('app-root');
 
-// --- 2. TEMPLATES (The HTML for each view) ---
-const loginTemplate = `
-<div class="login-container">
-    <div class="login-box">
-        <img src="logo.jpeg" alt="Srikar Jewellers Logo" class="logo">
-        <h1 class="login-title">Srikar Jewellers</h1>
-        <p class="login-subtitle">Staff Portal</p>
-        <div class="form-group"><label for="login-email">Email Address</label><input type="email" id="login-email"></div>
-        <div class="form-group"><label for="login-password">Password</label><input type="password" id="login-password"></div>
-        <button id="login-button" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Secure Login</button>
-        <p id="login-error"></p>
-    </div>
-</div>
-`;
+// --- GLOBAL STATE & ELEMENTS ---
+let currentUser = null;
+let currentUserRole = 'staff';
+const loginPage = document.getElementById('login-page');
+const appPage = document.getElementById('app-page');
+const loginButton = document.getElementById('login-button');
+const loginEmailInput = document.getElementById('login-email');
+const loginPasswordInput = document.getElementById('login-password');
+const loginError = document.getElementById('login-error');
 
-const adminTemplate = (userData) => `
-<div class="app-container">
-    <div class="main-container">
-        <header class="header">
-            <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
-            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
-        </header>
-        <main class="content-area">
-            <div class="premium-card">
-                <h2 class="section-title">Assign New Task</h2>
-                <form id="assign-task-form" class="form-grid">
-                    <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
-                    <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
-                    <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
-                    <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
-                </form>
-                <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
-            </div>
-            <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
-        </main>
-    </div>
-</div>
-`;
+// --- PAGE NAVIGATION ---
+const showView = (viewId) => {
+    appPage.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(viewId)?.classList.add('active');
+};
 
-const staffTemplate = (userData) => `
-<div class="app-container">
-    <div class="main-container">
-        <header class="header">
-            <div class="header-text"><h1>Staff Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
-            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
-        </header>
-        <main class="content-area">
-             <div class="premium-card"><h2 class="section-title">My Tasks</h2><div id="staff-task-list"></div></div>
-        </main>
-    </div>
-</div>
-`;
-
-// --- 3. CORE APP LOGIC ---
+// --- AUTHENTICATION ---
 onAuthStateChanged(auth, async (user) => {
     if (user) {
+        currentUser = user;
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
-            const userData = userDoc.data();
-            if (userData.role === 'admin') {
-                renderAdminDashboard(userData);
-            } else {
-                renderStaffDashboard(userData);
-            }
-        } else {
-            // Default to staff if no role is set
-            renderStaffDashboard({ name: user.displayName, email: user.email });
+            currentUser.displayName = userDoc.data().name;
+            currentUserRole = userDoc.data().role || 'staff';
         }
+        loginPage.classList.remove('active');
+        appPage.classList.add('active');
+        setupDashboard();
+        if(currentUserRole === 'admin') checkAndCreateRecurringTasks();
     } else {
-        renderLoginPage();
+        currentUser = null;
+        loginPage.classList.add('active');
+        appPage.classList.remove('active');
     }
 });
 
-// --- 4. RENDER FUNCTIONS ---
-function renderLoginPage() {
-    appRoot.innerHTML = loginTemplate;
-    const loginButton = document.getElementById('login-button');
-    loginButton.addEventListener('click', async () => {
-        const email = document.getElementById('login-email').value;
-        const password = document.getElementById('login-password').value;
-        const errorEl = document.getElementById('login-error');
-        try {
-            await signInWithEmailAndPassword(auth, email, password);
-        } catch (error) {
-            errorEl.textContent = 'Invalid email or password.';
-        }
-    });
-}
+loginButton.addEventListener('click', () => {
+    signInWithEmailAndPassword(auth, loginEmailInput.value, loginPasswordInput.value)
+        .catch(() => loginError.textContent = 'Invalid email or password.');
+});
+const logout = () => signOut(auth);
 
-function renderAdminDashboard(userData) {
-    appRoot.innerHTML = adminTemplate(userData);
+// --- DASHBOARD SETUP ---
+const setupDashboard = () => {
+    const headerNav = document.getElementById('header-nav');
+    const headerSubtitle = document.getElementById('header-subtitle');
+    headerNav.innerHTML = '';
     
-    // Populate staff dropdown for task assignment
-    const assigneeSelect = document.getElementById('task-assignee');
-    onSnapshot(collection(db, 'users'), snapshot => {
-        assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
-        snapshot.forEach(doc => {
-            const staff = doc.data();
-            if (staff.role !== 'admin') {
-                assigneeSelect.innerHTML += `<option value="${staff.uid}">${staff.name || staff.email}</option>`;
-            }
+    if (currentUserRole === 'admin') {
+        document.getElementById('header-title').textContent = "Admin Dashboard";
+        headerSubtitle.textContent = `Welcome, ${currentUser.displayName || currentUser.email}`;
+        headerNav.innerHTML = `
+            <button class="btn nav-btn active" data-view="admin-dashboard-view">Dashboard</button>
+            <button class="btn nav-btn" data-view="admin-performance-view">Performance</button>
+            <button id="logout-btn" class="btn btn-danger">Logout</button>`;
+        showView('admin-dashboard-view');
+        initializeAdminDashboard();
+    } else {
+        document.getElementById('header-title').textContent = "Staff Dashboard";
+        headerSubtitle.textContent = `Welcome, ${currentUser.displayName || currentUser.email}`;
+        headerNav.innerHTML = `
+            <button class="btn nav-btn active" data-view="staff-dashboard-view">My Tasks</button>
+            <button class="btn nav-btn" data-view="staff-attendance-view">Attendance</button>
+            <div id="notification-bell-container"></div>
+            <button id="logout-btn" class="btn btn-danger">Logout</button>`;
+        showView('staff-dashboard-view');
+        initializeStaffDashboard();
+    }
+    
+    headerNav.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            headerNav.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            showView(e.target.dataset.view);
         });
     });
+    headerNav.querySelector('#logout-btn').addEventListener('click', logout);
+};
 
-    // Assign Task button logic
-    document.getElementById('assign-task-button').addEventListener('click', async () => {
-        const assigneeSelectEl = document.getElementById('task-assignee');
-        const deadlineInput = document.getElementById('task-deadline');
+// --- ADMIN FEATURES ---
+const initializeAdminDashboard = () => {
+    const assignTaskButton = document.getElementById('assign-task-button');
+    assignTaskButton.addEventListener('click', async () => {
+        const assignedToUID = document.getElementById('task-assignee').value;
+        const assigneeSelect = document.getElementById('task-assignee');
+        const assignedToName = assigneeSelect.options[assigneeSelect.selectedIndex].text;
 
-        const taskData = {
-            title: document.getElementById('task-title').value.trim(),
-            assignedToUID: assigneeSelectEl.value,
-            assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
+        const task = {
+            title: document.getElementById('task-title').value,
+            assignedToUID: assignedToUID,
+            assignedToName: assignedToName,
             priority: document.getElementById('task-priority').value,
+            deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
+            isRecurring: document.getElementById('task-recurring').checked,
             status: 'Pending',
-            createdAt: serverTimestamp(),
-            deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
+            createdAt: serverTimestamp()
         };
-
-        if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
+        if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) return alert('Title, Assignee, and Deadline are required.');
         
-        await addDoc(collection(db, 'tasks'), taskData);
+        const taskRef = await addDoc(collection(db, 'tasks'), task);
+        
+        await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
+            message: `New task assigned: "${task.title}"`,
+            isRead: false,
+            createdAt: serverTimestamp()
+        });
         alert('Task assigned successfully!');
         document.getElementById('assign-task-form').reset();
     });
 
-    // Load All Active Tasks
-    const adminTaskList = document.getElementById('admin-task-list');
-    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
-    onSnapshot(q, snapshot => {
-        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
-        snapshot.docs.forEach(doc => {
-            const task = doc.data();
-            const item = document.createElement('div');
-            item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
-            const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
-            item.innerHTML = `<div><div class="task-title">${task.title}</div><small>To: ${task.assignedToName} | Deadline: ${deadlineText}</small></div><span class="role">${task.status}</span>`;
-            adminTaskList.appendChild(item);
+    onSnapshot(collection(db, 'users'), snapshot => {
+        const assigneeSelect = document.getElementById('task-assignee');
+        assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
+        snapshot.forEach(doc => {
+            const user = doc.data();
+            if (user.role !== 'admin') {
+                assigneeSelect.innerHTML += `<option value="${user.uid}">${user.name || user.email}</option>`;
+            }
         });
     });
-}
 
-function renderStaffDashboard(userData) {
-    appRoot.innerHTML = staffTemplate(userData);
+    const adminTaskList = document.getElementById('admin-task-list');
+    onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
+        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
+        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }));
+    });
     
-    // Load staff-specific tasks
+    document.querySelector('[data-view="admin-performance-view"]').addEventListener('click', renderPerformanceDashboard);
+};
+
+// --- STAFF FEATURES ---
+const initializeStaffDashboard = () => {
     const staffTaskList = document.getElementById('staff-task-list');
-    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', auth.currentUser.uid), orderBy('createdAt', 'desc'));
-    
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', currentUser.uid), orderBy('deadline', 'asc'));
     onSnapshot(q, snapshot => {
         staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
-        snapshot.docs.forEach(doc => {
-            const task = doc.data();
-            const item = document.createElement('div');
-            item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
-            const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
-            const statusOptions = ['Pending', 'Started', 'In Progress', 'Completed'];
-            const selectorHtml = `<select class="task-status-selector" data-taskid="${doc.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+        snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
+    });
+    
+    setupNotifications();
+    document.querySelector('[data-view="staff-attendance-view"]').addEventListener('click', setupAttendancePage);
+};
 
-            item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${selectorHtml}</div>`;
-            staffTaskList.appendChild(item);
+// --- TASK RENDERING & STATUS UPDATE ---
+const renderTaskItem = (container, task) => {
+    const item = document.createElement('div');
+    item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
+    const deadline = task.deadline.toDate().toLocaleString('en-IN');
+    const statusOptions = ['Pending', 'Started', 'In Progress', 'Completed'];
+    
+    let actionsHtml = (currentUserRole === 'staff')
+        ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
+        : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
+
+    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadline}</small></div><div>${actionsHtml}</div>`;
+    container.appendChild(item);
+
+    if (currentUserRole === 'staff') {
+        item.querySelector('.task-status-selector').addEventListener('change', e => {
+            const newStatus = e.target.value;
+            const taskRef = doc(db, 'tasks', task.id);
+            const updateData = { status: newStatus };
+            if (newStatus === 'Started' && !task.startedAt) updateData.startedAt = serverTimestamp();
+            if (newStatus === 'Completed' && !task.completedAt) updateData.completedAt = serverTimestamp();
+            updateDoc(taskRef, updateData);
+        });
+    }
+};
+
+// --- NOTIFICATIONS ---
+const setupNotifications = () => {
+    const bellContainer = document.getElementById('notification-bell-container');
+    bellContainer.innerHTML = `<button id="notification-bell" class="notification-bell"><i class="fas fa-bell"></i><span id="notification-dot" class="notification-dot"></span></button>`;
+    
+    const bell = document.getElementById('notification-bell');
+    const dot = document.getElementById('notification-dot');
+    const panel = document.getElementById('notification-panel');
+
+    const q = query(collection(db, 'users', currentUser.uid, 'notifications'), orderBy('createdAt', 'desc'));
+    onSnapshot(q, (snapshot) => {
+        const notifs = snapshot.docs;
+        const unreadCount = notifs.filter(d => !d.data().isRead).length;
+        dot.classList.toggle('visible', unreadCount > 0);
+        
+        const list = document.getElementById('notification-list');
+        list.innerHTML = notifs.length === 0 ? '<div class="notification-item">No new notifications.</div>' : '';
+        notifs.forEach(doc => {
+            const notif = doc.data();
+            const item = document.createElement('div');
+            item.className = `notification-item ${!notif.isRead ? 'unread' : ''}`;
+            item.innerHTML = `<p>${notif.message}</p><small>${notif.createdAt.toDate().toLocaleString('en-IN')}</small>`;
+            list.appendChild(item);
         });
     });
-}
 
-// --- 5. GLOBAL EVENT LISTENERS (for buttons inside templates) ---
-document.addEventListener('click', (event) => {
-    // Logout Button
-    if (event.target && event.target.id === 'logout-btn') {
-        signOut(auth);
-    }
-});
+    bell.addEventListener('click', async () => {
+        panel.classList.toggle('hidden');
+        if (!panel.classList.contains('hidden')) {
+            const notifsRef = collection(db, 'users', currentUser.uid, 'notifications');
+            const unreadQuery = query(notifsRef, where('isRead', '==', false));
+            const unreadSnapshot = await getDocs(unreadQuery);
+            const batch = writeBatch(db);
+            unreadSnapshot.forEach(doc => batch.update(doc.ref, { isRead: true }));
+            await batch.commit();
+        }
+    });
+};
 
-document.addEventListener('change', (event) => {
-    // Staff Task Status Selector
-    if (event.target && event.target.classList.contains('task-status-selector')) {
-        const taskId = event.target.dataset.taskid;
-        const newStatus = event.target.value;
-        const taskRef = doc(db, 'tasks', taskId);
-        updateDoc(taskRef, { status: newStatus });
+// --- ATTENDANCE ---
+const setupAttendancePage = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceDocRef = doc(db, 'users', currentUser.uid, 'attendance', today);
+    const buttons = {
+        clockIn: document.getElementById('clock-in-btn'), clockOut: document.getElementById('clock-out-btn'),
+        lunchOut: document.getElementById('lunch-out-btn'), lunchIn: document.getElementById('lunch-in-btn'),
+        snackOut: document.getElementById('snack-out-btn'), snackIn: document.getElementById('snack-in-btn')
+    };
+
+    buttons.clockIn.onclick = () => setDoc(attendanceDocRef, { clockIn: serverTimestamp() }, { merge: true });
+    buttons.clockOut.onclick = () => setDoc(attendanceDocRef, { clockOut: serverTimestamp() }, { merge: true });
+    buttons.lunchOut.onclick = () => setDoc(attendanceDocRef, { lunchOut: serverTimestamp() }, { merge: true });
+    buttons.lunchIn.onclick = () => setDoc(attendanceDocRef, { lunchIn: serverTimestamp() }, { merge: true });
+    buttons.snackOut.onclick = () => setDoc(attendanceDocRef, { snackOut: serverTimestamp() }, { merge: true });
+    buttons.snackIn.onclick = () => setDoc(attendanceDocRef, { snackIn: serverTimestamp() }, { merge: true });
+
+    const grid = document.getElementById('attendance-status-grid');
+    onSnapshot(attendanceDocRef, (docSnap) => {
+        const data = docSnap.exists() ? docSnap.data() : {};
+        const format = (ts) => ts ? ts.toDate().toLocaleTimeString('en-IN') : '--';
+        
+        grid.innerHTML = `
+            <div class="stat-card"><h3>Clock In</h3><span class="stat-number">${format(data.clockIn)}</span></div>
+            <div class="stat-card"><h3>Lunch Out</h3><span class="stat-number">${format(data.lunchOut)}</span></div>
+            <div class="stat-card"><h3>Lunch In</h3><span class="stat-number">${format(data.lunchIn)}</span></div>
+            <div class="stat-card"><h3>Snack Out</h3><span class="stat-number">${format(data.snackOut)}</span></div>
+            <div class="stat-card"><h3>Snack In</h3><span class="stat-number">${format(data.snackIn)}</span></div>
+            <div class="stat-card"><h3>Clock Out</h3><span class="stat-number">${format(data.clockOut)}</span></div>`;
+        
+        buttons.clockIn.classList.toggle('hidden', !!data.clockIn);
+        buttons.clockOut.classList.toggle('hidden', !data.clockIn || !!data.clockOut);
+        [buttons.lunchOut, buttons.snackOut].forEach(b => b.classList.toggle('disabled', !data.clockIn || !!data.clockOut));
+        buttons.lunchOut.classList.toggle('hidden', !!data.lunchOut);
+        buttons.lunchIn.classList.toggle('hidden', !data.lunchOut || !!data.lunchIn);
+        buttons.snackOut.classList.toggle('hidden', !!data.snackOut);
+        buttons.snackIn.classList.toggle('hidden', !data.snackOut || !!data.snackIn);
+    });
+    
+    calculateAvgTimes();
+};
+
+const calculateAvgTimes = async () => {
+    const avgGrid = document.getElementById('attendance-avg-grid');
+    const q = query(collection(db, 'users', currentUser.uid, 'attendance'), limit(30));
+    const snapshot = await getDocs(q);
+    let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
+    
+    snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.lunchIn && data.lunchOut) {
+            totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
+            lunchCount++;
+        }
+        if (data.snackIn && data.snackOut) {
+            totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
+            snackCount++;
+        }
+    });
+    
+    const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 0;
+    const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 0;
+    
+    avgGrid.innerHTML = `
+        <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
+        <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
+};
+
+// --- RECURRING TASKS ---
+const checkAndCreateRecurringTasks = async () => {
+    const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
+    const today = new Date().toISOString().split('T')[0];
+    if (lastCheck === today) return;
+
+    const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+
+    snapshot.forEach(doc => {
+        const task = doc.data();
+        const newDeadline = new Date();
+        newDeadline.setHours(23, 59, 59, 999); // End of today
+        
+        const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
+        delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
+        
+        const newTaskRef = doc(collection(db, 'tasks'));
+        batch.set(newTaskRef, newTask);
+        batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
+    });
+    
+    if (!snapshot.empty) await batch.commit();
+    localStorage.setItem('lastRecurringTaskCheck', today);
+};
+
+
+// --- PERFORMANCE DASHBOARD (ADMIN) ---
+const renderPerformanceDashboard = async () => {
+    const container = document.getElementById('performance-table-container');
+    container.innerHTML = `<p>Calculating performance metrics...</p>`;
+    
+    const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
+    const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
+    const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
+
+    let performanceData = [];
+    for (const userDoc of usersSnapshot.docs) {
+        const user = userDoc.data();
+        const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
+        
+        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
+        const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
+        
+        // Simplified scoring: more tasks = better, less time = better
+        const score = (userTasks.length * 10) - avgCompletionHours;
+        
+        performanceData.push({
+            name: user.name || user.email,
+            tasksCompleted: userTasks.length,
+            avgTime: avgCompletionHours.toFixed(2),
+            score
+        });
     }
-});
+
+    performanceData.sort((a, b) => b.score - a.score);
+
+    container.innerHTML = `
+        <table class="performance-table">
+            <thead><tr><th>Rank</th><th>Staff Name</th><th>Tasks Completed</th><th>Avg. Completion (Hours)</th></tr></thead>
+            <tbody>
+                ${performanceData.length === 0 ? '<tr><td colspan="4">No completed tasks with performance data yet.</td></tr>' : 
+                  performanceData.map((p, index) => `
+                    <tr>
+                        <td class="rank">#${index + 1}</td>
+                        <td>${p.name}</td>
+                        <td>${p.tasksCompleted}</td>
+                        <td>${p.avgTime}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>`;
+};
