@@ -1,205 +1,71 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
-
-// --- 1. CONFIGURATION ---
-const firebaseConfig = {
-    apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
-    authDomain: "srikar-jewellers-crm.firebaseapp.com",
-    projectId: "srikar-jewellers-crm",
-    storageBucket: "srikar-jewellers-crm.firebasestorage.app",
-    messagingSenderId: "377625912262",
-    appId: "1:377625g12262:web:d6d05bec0d817e211b48c7",
-    measurementId: "G-06K93QM4V4"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appRoot = document.getElementById('app-root');
-
-// --- 2. HTML TEMPLATES ---
-const loginTemplate = `
-<div class="login-container">
-    <div class="login-box">
-        <img src="logo.jpeg" alt="Srikar Jewellers Logo" class="logo">
-        <h1 class="login-title">Srikar Jewellers</h1><p class="login-subtitle">Staff Portal</p>
-        <div class="form-group"><label for="login-email">Email Address</label><input type="email" id="login-email"></div>
-        <div class="form-group"><label for="login-password">Password</label><input type="password" id="login-password"></div>
-        <button id="login-button" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Secure Login</button>
-        <p id="login-error"></p>
-    </div>
-</div>`;
-
-const adminTemplate = (userData) => `
-<div class="app-container">
-    <div class="main-container">
-        <header class="header">
-            <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
-            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
-        </header>
-        <main class="content-area">
-            <div class="premium-card"><h2 class="section-title">Assign New Task</h2>
-                <form id="assign-task-form" class="form-grid">
-                    <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
-                    <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
-                    <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
-                    <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
-                </form>
-                <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
-            </div>
-            <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
-        </main>
-    </div>
-</div>`;
-
-const staffTemplate = (userData) => `
-<div class="app-container">
-    <div class="main-container">
-        <header class="header">
-            <div class="header-text"><h1>Staff Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
-            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
-        </header>
-        <main class="content-area">
-             <div class="premium-card"><h2 class="section-title">My Tasks</h2><div id="staff-task-list"></div></div>
-        </main>
-    </div>
-</div>`;
-
-// --- 3. CORE APP LOGIC ---
-onAuthStateChanged(auth, async (user) => {
-    if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists()) {
-            const userData = userDoc.data();
-            if (userData.role === 'admin') {
-                renderAdminDashboard(userData);
-            } else {
-                renderStaffDashboard(userData);
-            }
-        } else {
-            renderStaffDashboard({ name: user.displayName, email: user.email });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Srikar Jewellers - Staff System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --gold-primary: #DCCA87; --gold-secondary: #F5EFE1; --dark-bg: #0C0C0C; --dark-secondary: #181818;
+            --text-primary: #FFFFFF; --text-secondary: #AAAAAA; --priority-high: #d9534f; --priority-medium: #f0ad4e;
+            --priority-low: #5cb85c; --transition-fast: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
-    } else {
-        renderLoginPage();
-    }
-});
-
-function attachGlobalListeners() {
-    appRoot.addEventListener('click', (event) => {
-        if (event.target && event.target.id === 'logout-btn') signOut(auth);
-        if (event.target && event.target.id === 'login-button') handleLogin();
-        if (event.target && event.target.id === 'assign-task-button') handleAssignTask();
-    });
-
-    appRoot.addEventListener('change', (event) => {
-        if (event.target && event.target.classList.contains('task-status-selector')) {
-            handleStatusChange(event.target.dataset.taskid, event.target.value);
-        }
-    });
-}
-attachGlobalListeners();
-
-// --- 4. RENDER FUNCTIONS ---
-function renderLoginPage() {
-    appRoot.innerHTML = loginTemplate;
-}
-
-function renderAdminDashboard(userData) {
-    appRoot.innerHTML = adminTemplate(userData);
-    populateStaffDropdown();
-    loadAdminTasks();
-}
-
-function renderStaffDashboard(userData) {
-    appRoot.innerHTML = staffTemplate(userData);
-    loadStaffTasks(auth.currentUser);
-}
-
-// --- 5. EVENT HANDLERS & LOGIC ---
-async function handleLogin() {
-    const email = document.getElementById('login-email').value;
-    const password = document.getElementById('login-password').value;
-    const errorEl = document.getElementById('login-error');
-    try {
-        await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-        errorEl.textContent = 'Invalid email or password.';
-    }
-}
-
-async function handleAssignTask() {
-    const assigneeSelectEl = document.getElementById('task-assignee');
-    const deadlineInput = document.getElementById('task-deadline');
-
-    const taskData = {
-        title: document.getElementById('task-title').value.trim(),
-        assignedToUID: assigneeSelectEl.value,
-        assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
-        priority: document.getElementById('task-priority').value,
-        status: 'Pending',
-        createdAt: serverTimestamp(),
-        deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
-    };
-
-    if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
-    
-    await addDoc(collection(db, 'tasks'), taskData);
-    alert('Task assigned successfully!');
-    document.getElementById('assign-task-form').reset();
-}
-
-function handleStatusChange(taskId, newStatus) {
-    const taskRef = doc(db, 'tasks', taskId);
-    updateDoc(taskRef, { status: newStatus });
-}
-
-function populateStaffDropdown() {
-    const assigneeSelect = document.getElementById('task-assignee');
-    onSnapshot(collection(db, 'users'), snapshot => {
-        assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
-        snapshot.forEach(doc => {
-            if (doc.data().role !== 'admin') {
-                assigneeSelect.innerHTML += `<option value="${doc.id}">${doc.data().name || doc.data().email}</option>`;
-            }
-        });
-    });
-}
-
-function loadAdminTasks() {
-    const adminTaskList = document.getElementById('admin-task-list');
-    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('status'), orderBy('createdAt', 'desc'));
-    onSnapshot(q, snapshot => {
-        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
-        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
-    });
-}
-
-function loadStaffTasks(user) {
-    const staffTaskList = document.getElementById('staff-task-list');
-    // CORRECTED: This query is now simple and does not require a special index.
-    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid));
-    
-    onSnapshot(q, snapshot => {
-        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
-        // Sort tasks manually after fetching them
-        const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        tasks.sort((a, b) => (a.createdAt > b.createdAt) ? -1 : 1);
-
-        tasks.forEach(task => renderTaskItem(staffTaskList, task, 'staff'));
-    });
-}
-
-function renderTaskItem(container, task, role) {
-    const item = document.createElement('div');
-    item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
-    const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
-    const statusOptions = ['Pending', 'In Progress', 'Completed'];
-    
-    let actionsHtml = (role === 'staff')
-        ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
-        : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
-
-    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
-    container.appendChild(item);
-}
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Poppins', sans-serif; background-color: var(--dark-bg); color: var(--text-secondary); min-height: 100vh; }
+        .hidden { display: none !important; }
+        .active { display: block !important; }
+        .login-container, .app-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+        .login-box { width: 100%; max-width: 450px; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 15px; padding: 3rem; text-align: center; animation: fadeIn 0.5s ease-out; }
+        .logo { width: 90px; height: 90px; border-radius: 50%; border: 3px solid var(--gold-primary); box-shadow: 0 0 25px rgba(220, 202, 135, 0.2); margin: 0 auto 1rem auto; object-fit: cover; }
+        .login-title { font-family: 'Cormorant Garamond', serif; font-size: 3rem; color: var(--gold-primary); }
+        .login-subtitle { margin-bottom: 2.5rem; font-size: 1.1rem; }
+        #login-error { color: var(--priority-high); margin-top: 1rem; min-height: 1.2em; }
+        .main-container { width: 100%; max-width: 1200px; margin: 2rem auto; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 20px; overflow: hidden; animation: fadeIn 0.5s ease-out; }
+        .header { padding: 2.5rem; background: #111111; border-bottom: 1px solid rgba(220, 202, 135, 0.15); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+        .header-text h1 { font-family: 'Cormorant Garamond', serif; font-size: 2.5rem; color: var(--gold-primary); }
+        nav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .nav-btn { background: transparent; color: var(--gold-primary); padding: 0.6rem 1rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: var(--transition-fast); }
+        .nav-btn:hover, .nav-btn.active { background: var(--gold-primary); color: var(--dark-bg); }
+        .content-area { padding: 2.5rem; }
+        .view { display: none; }
+        .view.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .section-title { font-family: 'Cormorant Garamond', serif; font-size: 2.2rem; color: var(--gold-primary); margin-bottom: 2rem; text-align: center; }
+        .premium-card { background: #111111; border: 1px solid rgba(220, 202, 135, 0.1); border-radius: 15px; padding: 2rem; margin-bottom: 2.5rem; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; }
+        .form-group { display: flex; flex-direction: column; text-align: left; }
+        .form-group label { margin-bottom: 0.75rem; font-weight: 500; color: var(--gold-secondary); font-size: 0.9rem; text-transform: uppercase; }
+        .form-group input, .form-group select { width: 100%; padding: 0.8rem 1rem; border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 8px; font-size: 1rem; font-family: 'Poppins', sans-serif; background: var(--dark-secondary); color: var(--text-primary); transition: var(--transition-fast); }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--gold-primary); }
+        .form-group input[type="checkbox"] { width: auto; margin-right: 10px; }
+        .btn { padding: 0.8rem 1.8rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; text-transform: uppercase; transition: var(--transition-fast); display: inline-flex; align-items: center; gap: 0.75rem; justify-content: center; }
+        .btn-primary { background: var(--gold-primary); color: var(--dark-bg); }
+        .btn-danger { background: var(--priority-high); color: white; border-color: var(--priority-high); }
+        .btn-secondary { background: transparent; color: var(--gold-primary); }
+        .btn:disabled { background: #333; border-color: #444; color: #777; cursor: not-allowed; }
+        .task-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.2rem 1rem; background: #1C1C1C; border-radius: 8px; margin-bottom: 1rem; border-left: 5px solid var(--text-secondary); }
+        .task-status-selector { background: var(--dark-secondary); color: var(--text-primary); border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 5px; padding: 5px; font-family: 'Poppins', sans-serif; font-size: 0.9rem;}
+        .task-item.Urgent { border-left-color: var(--priority-high); }
+        .task-item.Important { border-left-color: var(--priority-medium); }
+        .task-item.Not-Important { border-left-color: var(--priority-low); }
+        .task-title { font-weight: 600; color: var(--text-primary); }
+        .role { font-weight: 600; text-transform: capitalize; }
+        .attendance-controls { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 2rem; }
+        .break-buttons { display: flex; gap: 10px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 2.5rem; }
+        .stat-card { background: #111; padding: 25px; border-radius: 15px; text-align: center; border-top: 3px solid var(--gold-primary); }
+        .stat-card h3 { font-family: 'Cormorant Garamond', serif; color: var(--gold-secondary); margin-bottom: 10px; font-size: 1.2rem; }
+        .stat-number { font-size: 2.5rem; font-weight: bold; color: var(--text-primary); display: block; margin-top: 10px; }
+        .performance-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
+        .performance-table th, .performance-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid rgba(220, 202, 135, 0.1); }
+        .performance-table th { color: var(--gold-primary); text-transform: uppercase; }
+        .performance-table .rank { font-weight: bold; font-size: 1.2rem; color: var(--gold-primary); }
+    </style>
+</head>
+<body>
+    <div id="app-root"></div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
