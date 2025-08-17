@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Srikar Jewellers - Staff Tasks</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="login-screen" class="login-container">
+        <div class="login-box">
+            <img src="logo.jpeg" alt="Srikar Jewellers Logo" class="logo">
+            <h1 class="login-title">Srikar Jewellers</h1>
+            <p class="login-subtitle">Staff Portal</p>
+            <div class="form-group">
+                <label for="login-email">Email Address</label>
+                <input type="email" id="login-email" placeholder="Enter your email">
+            </div>
+            <div class="form-group">
+                <label for="login-password">Password</label>
+                <input type="password" id="login-password" placeholder="Enter your password">
+            </div>
+            <button id="login-button" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Secure Login</button>
+            <p id="login-error"></p>
+        </div>
+    </div>
+
+    <div id="app-screen" class="hidden">
+        <div class="main-container">
+            <header class="header">
+                <div class="header-text">
+                    <h1>Staff Task Delegation</h1>
+                    <p>Srikar Jewellers - Operations</p>
+                </div>
+                <button id="logout-button" class="btn btn-danger"><i class="fas fa-sign-out-alt"></i> Logout</button>
+            </header>
+
+            <main class="content-area">
+                <div class="premium-card">
+                    <h2 class="section-title">Add New Task</h2>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="task-title">Task Title</label>
+                            <input type="text" id="task-title" placeholder="e.g., Audit 22-carat gold chains">
+                        </div>
+                        <div class="form-group">
+                            <label for="task-priority">Set Priority</label>
+                            <select id="task-priority">
+                                <option value="Medium">Medium Priority</option>
+                                <option value="High">High Priority</option>
+                                <option value="Low">Low Priority</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="task-assignee">Assign To</label>
+                            <select id="task-assignee">
+                                <option value="">Select Staff Member...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 1.5rem;">
+                        <button id="add-task-button" class="btn btn-primary"><i class="fas fa-plus-circle"></i> Add Task to List</button>
+                    </div>
+                </div>
+
+                <div class="premium-card">
+                    <h2 class="section-title">Current Tasks</h2>
+                    <div id="task-list">
+                        </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+
+</body>
+</html>
