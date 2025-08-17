@@ -2,7 +2,7 @@ import { auth, db } from './common.js';
 import { onAuthStateChanged, signOut, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 import { collection, doc, addDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, setDoc, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
-// Page Protection and Initialization
+// Page Protection: Redirects staff or non-logged-in users
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
@@ -16,22 +16,32 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-const initializeAdminDashboard = (user, userData) => {
+function initializeAdminDashboard(user, userData) {
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
+    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
 
-    // --- View Navigation ---
+    // View Navigation
     const navButtons = document.querySelectorAll('.nav-btn');
     const views = document.querySelectorAll('.view');
     navButtons.forEach(btn => {
         btn.addEventListener('click', (e) => {
             navButtons.forEach(b => b.classList.remove('active'));
             e.currentTarget.classList.add('active');
-            views.forEach(v => v.classList.add('hidden'));
-            document.getElementById(e.currentTarget.dataset.view)?.classList.remove('hidden');
+            views.forEach(v => {
+                v.classList.remove('active');
+                v.classList.add('hidden');
+            });
+            const viewId = e.currentTarget.dataset.view;
+            document.getElementById(viewId)?.classList.remove('hidden');
+            document.getElementById(viewId)?.classList.add('active');
+            
+            if (viewId === 'admin-performance-view') {
+                renderPerformanceDashboard();
+            }
         });
     });
 
-    // --- Staff Dropdown Population ---
+    // Populate staff dropdown for task assignment
     const assigneeSelect = document.getElementById('task-assignee');
     onSnapshot(collection(db, 'users'), snapshot => {
         assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
@@ -43,30 +53,32 @@ const initializeAdminDashboard = (user, userData) => {
         });
     });
     
-    // --- Assign Task Logic ---
+    // Assign Task button logic
     document.getElementById('assign-task-button').addEventListener('click', async () => {
-        const assignedToUID = document.getElementById('task-assignee').value;
         const assigneeSelectEl = document.getElementById('task-assignee');
+        const deadlineInput = document.getElementById('task-deadline');
+        const assignedToUID = assigneeSelectEl.value;
         const assignedToName = assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text;
+        const taskTitle = document.getElementById('task-title').value;
 
-        const task = {
-            title: document.getElementById('task-title').value,
+        if (!taskTitle || !assignedToUID) {
+            return alert('Title and Assignee are required.');
+        }
+
+        const taskData = {
+            title: taskTitle,
             assignedToUID,
             assignedToName,
             priority: document.getElementById('task-priority').value,
-            deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
             isRecurring: document.getElementById('task-recurring').checked,
             status: 'Pending',
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
+            deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
         };
-        if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) {
-            return alert('Title, Assignee, and Deadline are required.');
-        }
         
-        const taskRef = await addDoc(collection(db, 'tasks'), task);
-        
-        await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
-            message: `New task assigned: "${task.title}"`,
+        const taskRef = await addDoc(collection(db, 'tasks'), taskData);
+        await addDoc(collection(db, 'users', assignedToUID, 'notifications'), {
+            message: `New task assigned: "${taskData.title}"`,
             isRead: false,
             createdAt: serverTimestamp()
         });
@@ -74,19 +86,22 @@ const initializeAdminDashboard = (user, userData) => {
         document.getElementById('assign-task-form').reset();
     });
 
-    // --- Load All Active Tasks ---
+    // Load All Active Tasks
     const adminTaskList = document.getElementById('admin-task-list');
-    onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
+    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
+    onSnapshot(q, snapshot => {
         adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
         snapshot.docs.forEach(doc => {
+            const task = doc.data();
             const item = document.createElement('div');
-            item.className = `task-item ${doc.data().priority.replace(' ', '-')} ${doc.data().status}`;
-            item.innerHTML = `<div><div class="task-title">${doc.data().title}</div><small>To: ${doc.data().assignedToName}</small></div><span class="role">${doc.data().status}</span>`;
+            item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
+            const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
+            item.innerHTML = `<div><div class="task-title">${task.title}</div><small>To: ${task.assignedToName} | Deadline: ${deadlineText}</small></div><span class="role">${task.status}</span>`;
             adminTaskList.appendChild(item);
         });
     });
     
-    // --- Create Staff Logic ---
+    // Create Staff Logic
     document.getElementById('create-staff-button').addEventListener('click', async () => {
         const name = document.getElementById('staff-name').value;
         const email = document.getElementById('staff-email').value;
@@ -94,7 +109,7 @@ const initializeAdminDashboard = (user, userData) => {
         if (!name || !email || password.length < 6) return alert('All fields are required. Password must be 6+ characters.');
         
         try {
-            const tempApp = initializeApp(firebaseConfig, 'Secondary'); // Use a temporary app instance to avoid logging out the admin
+            const tempApp = initializeApp(firebaseConfig, `Secondary-${new Date().getTime()}`);
             const tempAuth = getAuth(tempApp);
             const userCredential = await createUserWithEmailAndPassword(tempAuth, email, password);
             
@@ -103,18 +118,15 @@ const initializeAdminDashboard = (user, userData) => {
             });
             alert(`Staff account for ${name} created successfully!`);
             document.getElementById('create-staff-form').reset();
-            await signOut(tempAuth); // Sign out the temporary instance
+            await signOut(tempAuth);
         } catch (error) {
             alert(`Error: ${error.message}`);
         }
     });
+}
 
-    // --- Performance View Trigger ---
-    document.querySelector('[data-view="admin-performance-view"]').addEventListener('click', renderPerformanceDashboard);
-};
-
-// --- PERFORMANCE DASHBOARD RENDER ---
-const renderPerformanceDashboard = async () => {
+// Renders the Performance Dashboard
+async function renderPerformanceDashboard() {
     const container = document.getElementById('performance-table-container');
     container.innerHTML = `<p>Calculating performance metrics...</p>`;
     
@@ -127,7 +139,7 @@ const renderPerformanceDashboard = async () => {
         const user = userDoc.data();
         
         const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
-        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // hours
+        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000);
         const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
         
         const thirtyDaysAgo = new Date();
@@ -161,11 +173,6 @@ const renderPerformanceDashboard = async () => {
                 `).join('')}
             </tbody>
         </table>`;
-};
+}
 
-// --- GLOBAL LOGOUT LISTENER (ROBUST METHOD) ---
-document.addEventListener('click', (event) => {
-    if (event.target && event.target.id === 'logout-btn') {
-        signOut(auth);
-    }
-});
+// ... (Other functions like recurring tasks if needed)
