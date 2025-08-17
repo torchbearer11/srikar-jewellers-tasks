@@ -17,10 +17,7 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 const initializeStaffDashboard = (user, userData) => {
-    // CORRECTED: Personalized welcome message
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
-    // CORRECTED: Logout button listener
-    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
     
     // View navigation
     const navButtons = document.querySelectorAll('.nav-btn');
@@ -46,4 +43,11 @@ const initializeStaffDashboard = (user, userData) => {
     document.querySelector('[data-view="staff-attendance-view"]').addEventListener('click', () => setupAttendancePage(user));
 };
 
-// ... (All other staff helper functions from previous complete version: renderTaskItem, setupNotifications, setupAttendancePage, etc.)
+// --- GLOBAL LOGOUT LISTENER (MORE ROBUST) ---
+document.addEventListener('click', (event) => {
+    if (event.target && event.target.id === 'logout-btn') {
+        signOut(auth);
+    }
+});
+
+// ... (All other staff helper functions from the previous complete version: renderTaskItem, setupNotifications, setupAttendancePage, etc.)
