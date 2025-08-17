@@ -26,7 +26,11 @@
         .header { padding: 2.5rem; background: #111111; border-bottom: 1px solid rgba(220, 202, 135, 0.15); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
         .header-text h1 { font-family: 'Cormorant Garamond', serif; font-size: 2.5rem; color: var(--gold-primary); }
         nav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .nav-btn { background: transparent; color: var(--gold-primary); padding: 0.6rem 1rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: var(--transition-fast); }
+        .nav-btn:hover, .nav-btn.active { background: var(--gold-primary); color: var(--dark-bg); }
         .content-area { padding: 2.5rem; }
+        .view { display: none; }
+        .view.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .section-title { font-family: 'Cormorant Garamond', serif; font-size: 2.2rem; color: var(--gold-primary); margin-bottom: 2rem; text-align: center; }
         .premium-card { background: #111111; border: 1px solid rgba(220, 202, 135, 0.1); border-radius: 15px; padding: 2rem; margin-bottom: 2.5rem; }
