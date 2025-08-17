@@ -557,3 +557,137 @@ async function renderPerformanceDashboard() {
         }
     }
 }
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+
+// --- CONFIG ---
+const firebaseConfig = {
+    apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
+    authDomain: "srikar-jewellers-crm.firebaseapp.com",
+    projectId: "srikar-jewellers-crm",
+    storageBucket: "srikar-jewellers-crm.firebasestorage.app",
+    messagingSenderId: "377625912262",
+    appId: "1:377625912262:web:d6d05bec0d817e211b48c7",
+    measurementId: "G-06K93QM4V4"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appRoot = document.getElementById('app-root');
+let currentView = '';
+
+// --- HTML TEMPLATES --- see previous code for unchanged templates, below only changes for adminTemplate ---
+const adminTemplate = (userData) => `
+<div class="app-container">
+    <div class="main-container">
+        <header class="header">
+            <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
+            <nav>
+                <button class="nav-btn active" data-view="admin-dashboard">Dashboard</button>
+                <button class="nav-btn" data-view="admin-performance">Performance</button>
+                <button id="logout-btn" class="btn btn-danger">Logout</button>
+            </nav>
+        </header>
+        <main class="content-area">
+            <div id="admin-dashboard-view" class="view active">
+                <div class="premium-card">
+                    <h2 class="section-title">Assign New Task</h2>
+                    <form id="assign-task-form" class="form-grid">
+                        <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
+                        <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
+                        <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
+                        <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
+                        <div class="form-group"><label><input type="checkbox" id="task-recurring"> Daily Recurring Task</label></div>
+                    </form>
+                    <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
+                </div>
+                <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
+            </div>
+            <div id="admin-performance-view" class="view">
+                <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"></div></div>
+            </div>
+        </main>
+    </div>
+</div>`;
+
+// --- event handlers and navigation as previously coded ---
+
+async function handleAssignTask() {
+    const assigneeSelectEl = document.getElementById('task-assignee');
+    const deadlineInput = document.getElementById('task-deadline');
+    const isRecurring = document.getElementById('task-recurring').checked;
+    const taskData = {
+        title: document.getElementById('task-title').value.trim(),
+        assignedToUID: assigneeSelectEl.value,
+        assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
+        priority: document.getElementById('task-priority').value,
+        status: 'Pending',
+        createdAt: serverTimestamp(),
+        isRecurring: isRecurring
+    };
+    if (deadlineInput.value) {
+        taskData.deadline = Timestamp.fromDate(new Date(deadlineInput.value));
+    }
+    if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
+
+    try {
+        await addDoc(collection(db, 'tasks'), taskData);
+        alert('Task assigned successfully!');
+        document.getElementById('assign-task-form').reset();
+    } catch (error) {
+        console.error('Error assigning task:', error);
+        alert('Error assigning task. Please try again.');
+    }
+}
+
+// --- Admin "Active Tasks" list (only NOT Completed, live update as staff mark completed) ---
+function loadAdminTasks() {
+    const adminTaskList = document.getElementById('admin-task-list');
+    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
+    onSnapshot(q, snapshot => {
+        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
+        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
+    });
+}
+
+// --- Recurring Task (Every day at login as admin, checks and creates today's instance) ---
+async function checkAndCreateRecurringTasks() {
+    const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
+    const today = new Date().toISOString().split('T')[0];
+    if (lastCheck === today) return;
+
+    const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+
+    snapshot.forEach(doc => {
+        const task = doc.data();
+        const newDeadline = new Date();
+        newDeadline.setHours(23, 59, 59, 999); // End of today
+        const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
+        delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
+        const newTaskRef = doc(collection(db, 'tasks'));
+        batch.set(newTaskRef, newTask);
+        batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring
+    });
+    if (!snapshot.empty) await batch.commit();
+    localStorage.setItem('lastRecurringTaskCheck', today);
+}
+
+// --- Everything else unchanged; all event listeners, staff task view, navigation, attendance, performance work as in your last code ---
+
+// --- Ensure to call loadAdminTasks() when rendering admin dashboard and checkAndCreateRecurringTasks() on admin login ---
+
+// Example:
+function renderAdminDashboard(userData) {
+    appRoot.innerHTML = adminTemplate(userData);
+    populateStaffDropdown();
+    loadAdminTasks();
+    checkAndCreateRecurringTasks();
+    currentView = 'admin-dashboard';
+}
+
+// --- All other functions and event handler code -- use as in previous code ---
+
