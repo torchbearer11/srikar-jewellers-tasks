@@ -1,6 +1,6 @@
 // import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 // import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-// import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+// import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
 // // --- 1. CONFIGURATION ---
 // const firebaseConfig = {
@@ -53,6 +53,7 @@
 //                         <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
 //                         <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
 //                     </form>
+//                     <div class="form-group"><label><input type="checkbox" id="task-recurring"> Daily Recurring Task</label></div>
 //                     <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
 //                 </div>
 //                 <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
@@ -163,6 +164,7 @@
 //     appRoot.innerHTML = adminTemplate(userData);
 //     populateStaffDropdown();
 //     loadAdminTasks();
+//     checkAndCreateRecurringTasks();
 //     currentView = 'admin-dashboard';
 // }
 
@@ -208,6 +210,8 @@
 // async function handleAssignTask() {
 //     const assigneeSelectEl = document.getElementById('task-assignee');
 //     const deadlineInput = document.getElementById('task-deadline');
+//     const isRecurring = document.getElementById('task-recurring').checked;
+    
 //     const taskData = {
 //         title: document.getElementById('task-title').value.trim(),
 //         assignedToUID: assigneeSelectEl.value,
@@ -215,8 +219,13 @@
 //         priority: document.getElementById('task-priority').value,
 //         status: 'Pending',
 //         createdAt: serverTimestamp(),
-//         deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
+//         isRecurring: isRecurring
 //     };
+    
+//     // Only add deadline if provided
+//     if (deadlineInput.value) {
+//         taskData.deadline = Timestamp.fromDate(new Date(deadlineInput.value));
+//     }
     
 //     if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
     
@@ -224,6 +233,7 @@
 //         await addDoc(collection(db, 'tasks'), taskData);
 //         alert('Task assigned successfully!');
 //         document.getElementById('assign-task-form').reset();
+//         document.getElementById('task-recurring').checked = false;
 //     } catch (error) {
 //         console.error('Error assigning task:', error);
 //         alert('Error assigning task. Please try again.');
@@ -252,9 +262,10 @@
 //     });
 // }
 
+// // --- ADMIN TASK LIST (Shows all active tasks, updates instantly when staff completes) ---
 // function loadAdminTasks() {
 //     const adminTaskList = document.getElementById('admin-task-list');
-//     const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('status'), orderBy('createdAt', 'desc'));
+//     const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
 //     onSnapshot(q, snapshot => {
 //         adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
 //         snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
@@ -278,16 +289,55 @@
 //     item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
 //     const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
 //     const statusOptions = ['Pending', 'In Progress', 'Completed'];
+//     const recurringBadge = task.isRecurring ? '<small style="color: #DCCA87; font-weight: bold;"> [Daily]</small>' : '';
     
 //     let actionsHtml = (role === 'staff')
 //         ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
 //         : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
     
-//     item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
+//     item.innerHTML = `<div><div class="task-title">${task.title}${recurringBadge}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
 //     container.appendChild(item);
 // }
 
-// // --- 6. ATTENDANCE FUNCTIONS ---
+// // --- 6. RECURRING TASKS ---
+// async function checkAndCreateRecurringTasks() {
+//     try {
+//         const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
+//         const today = new Date().toISOString().split('T')[0];
+//         if (lastCheck === today) return;
+
+//         const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
+//         const snapshot = await getDocs(q);
+//         const batch = writeBatch(db);
+
+//         snapshot.forEach(doc => {
+//             const task = doc.data();
+//             const newDeadline = new Date();
+//             newDeadline.setHours(23, 59, 59, 999); // End of today
+            
+//             const newTask = { 
+//                 ...task, 
+//                 deadline: Timestamp.fromDate(newDeadline), 
+//                 status: 'Pending', 
+//                 createdAt: serverTimestamp() 
+//             };
+//             delete newTask.id; 
+//             delete newTask.startedAt; 
+//             delete newTask.completedAt;
+            
+//             const newTaskRef = doc(collection(db, 'tasks'));
+//             batch.set(newTaskRef, newTask);
+//             batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
+//         });
+        
+//         if (!snapshot.empty) await batch.commit();
+//         localStorage.setItem('lastRecurringTaskCheck', today);
+//     } catch (error) {
+//         console.error('Error creating recurring tasks:', error);
+//     }
+// }
+
+// // --- 7. ATTENDANCE FUNCTIONS ---
 // async function handleClockIn() {
 //     const today = new Date().toISOString().split('T')[0];
 //     const attendanceDocRef = doc(db, 'users', auth.currentUser.uid, 'attendance', today);
@@ -441,7 +491,7 @@
 //     }
 // }
 
-// // --- 7. PERFORMANCE DASHBOARD ---
+// // --- 8. PERFORMANCE DASHBOARD ---
 // async function renderPerformanceDashboard() {
 //     if (currentView !== 'admin-performance') return;
     
@@ -557,139 +607,6 @@
 //         }
 //     }
 // }
-// import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-// import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-// import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
-
-// // --- CONFIG ---
-// const firebaseConfig = {
-//     apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
-//     authDomain: "srikar-jewellers-crm.firebaseapp.com",
-//     projectId: "srikar-jewellers-crm",
-//     storageBucket: "srikar-jewellers-crm.firebasestorage.app",
-//     messagingSenderId: "377625912262",
-//     appId: "1:377625912262:web:d6d05bec0d817e211b48c7",
-//     measurementId: "G-06K93QM4V4"
-// };
-
-// const app = initializeApp(firebaseConfig);
-// const auth = getAuth(app);
-// const db = getFirestore(app);
-// const appRoot = document.getElementById('app-root');
-// let currentView = '';
-
-// // --- HTML TEMPLATES --- see previous code for unchanged templates, below only changes for adminTemplate ---
-// const adminTemplate = (userData) => `
-// <div class="app-container">
-//     <div class="main-container">
-//         <header class="header">
-//             <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
-//             <nav>
-//                 <button class="nav-btn active" data-view="admin-dashboard">Dashboard</button>
-//                 <button class="nav-btn" data-view="admin-performance">Performance</button>
-//                 <button id="logout-btn" class="btn btn-danger">Logout</button>
-//             </nav>
-//         </header>
-//         <main class="content-area">
-//             <div id="admin-dashboard-view" class="view active">
-//                 <div class="premium-card">
-//                     <h2 class="section-title">Assign New Task</h2>
-//                     <form id="assign-task-form" class="form-grid">
-//                         <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
-//                         <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
-//                         <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
-//                         <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
-//                         <div class="form-group"><label><input type="checkbox" id="task-recurring"> Daily Recurring Task</label></div>
-//                     </form>
-//                     <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
-//                 </div>
-//                 <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
-//             </div>
-//             <div id="admin-performance-view" class="view">
-//                 <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"></div></div>
-//             </div>
-//         </main>
-//     </div>
-// </div>`;
-
-// // --- event handlers and navigation as previously coded ---
-
-// async function handleAssignTask() {
-//     const assigneeSelectEl = document.getElementById('task-assignee');
-//     const deadlineInput = document.getElementById('task-deadline');
-//     const isRecurring = document.getElementById('task-recurring').checked;
-//     const taskData = {
-//         title: document.getElementById('task-title').value.trim(),
-//         assignedToUID: assigneeSelectEl.value,
-//         assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
-//         priority: document.getElementById('task-priority').value,
-//         status: 'Pending',
-//         createdAt: serverTimestamp(),
-//         isRecurring: isRecurring
-//     };
-//     if (deadlineInput.value) {
-//         taskData.deadline = Timestamp.fromDate(new Date(deadlineInput.value));
-//     }
-//     if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
-
-//     try {
-//         await addDoc(collection(db, 'tasks'), taskData);
-//         alert('Task assigned successfully!');
-//         document.getElementById('assign-task-form').reset();
-//     } catch (error) {
-//         console.error('Error assigning task:', error);
-//         alert('Error assigning task. Please try again.');
-//     }
-// }
-
-// // --- Admin "Active Tasks" list (only NOT Completed, live update as staff mark completed) ---
-// function loadAdminTasks() {
-//     const adminTaskList = document.getElementById('admin-task-list');
-//     const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
-//     onSnapshot(q, snapshot => {
-//         adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
-//         snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
-//     });
-// }
-
-// // --- Recurring Task (Every day at login as admin, checks and creates today's instance) ---
-// async function checkAndCreateRecurringTasks() {
-//     const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
-//     const today = new Date().toISOString().split('T')[0];
-//     if (lastCheck === today) return;
-
-//     const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
-//     const snapshot = await getDocs(q);
-//     const batch = writeBatch(db);
-
-//     snapshot.forEach(doc => {
-//         const task = doc.data();
-//         const newDeadline = new Date();
-//         newDeadline.setHours(23, 59, 59, 999); // End of today
-//         const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
-//         delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
-//         const newTaskRef = doc(collection(db, 'tasks'));
-//         batch.set(newTaskRef, newTask);
-//         batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring
-//     });
-//     if (!snapshot.empty) await batch.commit();
-//     localStorage.setItem('lastRecurringTaskCheck', today);
-// }
-
-// // --- Everything else unchanged; all event listeners, staff task view, navigation, attendance, performance work as in your last code ---
-
-// // --- Ensure to call loadAdminTasks() when rendering admin dashboard and checkAndCreateRecurringTasks() on admin login ---
-
-// // Example:
-// function renderAdminDashboard(userData) {
-//     appRoot.innerHTML = adminTemplate(userData);
-//     populateStaffDropdown();
-//     loadAdminTasks();
-//     checkAndCreateRecurringTasks();
-//     currentView = 'admin-dashboard';
-// }
-
-// // --- All other functions and event handler code -- use as in previous code ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
@@ -710,6 +627,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appRoot = document.getElementById('app-root');
 let currentView = '';
+let performanceUpdateListener = null;
 
 // --- 2. HTML TEMPLATES ---
 const loginTemplate = `
@@ -731,6 +649,7 @@ const adminTemplate = (userData) => `
             <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
             <nav>
                 <button class="nav-btn active" data-view="admin-dashboard">Dashboard</button>
+                <button class="nav-btn" data-view="admin-all-tasks">All Staff Tasks</button>
                 <button class="nav-btn" data-view="admin-performance">Performance</button>
                 <button id="logout-btn" class="btn btn-danger">Logout</button>
             </nav>
@@ -749,6 +668,20 @@ const adminTemplate = (userData) => `
                     <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
                 </div>
                 <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
+            </div>
+            <div id="admin-all-tasks-view" class="view">
+                <div class="premium-card">
+                    <h2 class="section-title">All Staff Tasks</h2>
+                    <div class="form-group" style="max-width: 300px; margin: 0 auto 2rem auto;">
+                        <label>Select Staff Member</label>
+                        <select id="staff-selector">
+                            <option value="">Select Staff...</option>
+                        </select>
+                    </div>
+                    <div id="selected-staff-tasks">
+                        <p style="text-align: center; color: var(--text-secondary);">Select a staff member to view their tasks</p>
+                    </div>
+                </div>
             </div>
             <div id="admin-performance-view" class="view">
                 <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"></div></div>
@@ -836,6 +769,9 @@ function attachGlobalListeners() {
         if (event.target && event.target.classList.contains('task-status-selector')) {
             handleStatusChange(event.target.dataset.taskid, event.target.value);
         }
+        if (event.target && event.target.id === 'staff-selector') {
+            loadSelectedStaffTasks(event.target.value);
+        }
     });
     
     appRoot.addEventListener('keypress', (event) => {
@@ -855,8 +791,10 @@ function renderLoginPage() {
 function renderAdminDashboard(userData) {
     appRoot.innerHTML = adminTemplate(userData);
     populateStaffDropdown();
+    populateStaffSelector();
     loadAdminTasks();
     checkAndCreateRecurringTasks();
+    setupPerformanceListener();
     currentView = 'admin-dashboard';
 }
 
@@ -884,6 +822,8 @@ function handleNavigation(button) {
         renderPerformanceDashboard();
     } else if (viewId === 'staff-attendance') {
         setupAttendancePage();
+    } else if (viewId === 'admin-all-tasks') {
+        populateStaffSelector();
     }
 }
 
@@ -954,6 +894,71 @@ function populateStaffDropdown() {
     });
 }
 
+function populateStaffSelector() {
+    const staffSelector = document.getElementById('staff-selector');
+    if (!staffSelector) return;
+    
+    onSnapshot(collection(db, 'users'), snapshot => {
+        staffSelector.innerHTML = '<option value="">Select Staff...</option>';
+        snapshot.forEach(doc => {
+            if (doc.data().role !== 'admin') {
+                staffSelector.innerHTML += `<option value="${doc.id}">${doc.data().name || doc.data().email}</option>`;
+            }
+        });
+    });
+}
+
+// --- NEW: Load all tasks for selected staff ---
+function loadSelectedStaffTasks(staffUID) {
+    const container = document.getElementById('selected-staff-tasks');
+    if (!container) return;
+    
+    if (!staffUID) {
+        container.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">Select a staff member to view their tasks</p>';
+        return;
+    }
+    
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', staffUID), orderBy('createdAt', 'desc'));
+    onSnapshot(q, snapshot => {
+        if (snapshot.empty) {
+            container.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">No tasks assigned to this staff member</p>';
+            return;
+        }
+        
+        const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const completedTasks = tasks.filter(task => task.status === 'Completed');
+        const incompleteTasks = tasks.filter(task => task.status !== 'Completed');
+        
+        container.innerHTML = `
+            <div class="task-section">
+                <h3>Incomplete Tasks (${incompleteTasks.length})</h3>
+                <div id="incomplete-tasks-list"></div>
+            </div>
+            <div class="task-section">
+                <h3>Completed Tasks (${completedTasks.length})</h3>
+                <div id="completed-tasks-list"></div>
+            </div>
+        `;
+        
+        const incompleteContainer = document.getElementById('incomplete-tasks-list');
+        const completedContainer = document.getElementById('completed-tasks-list');
+        
+        if (incompleteTasks.length === 0) {
+            incompleteContainer.innerHTML = '<p style="color: var(--text-secondary);">No incomplete tasks</p>';
+        } else {
+            incompleteContainer.innerHTML = '';
+            incompleteTasks.forEach(task => renderTaskItem(incompleteContainer, task, 'admin-view'));
+        }
+        
+        if (completedTasks.length === 0) {
+            completedContainer.innerHTML = '<p style="color: var(--text-secondary);">No completed tasks</p>';
+        } else {
+            completedContainer.innerHTML = '';
+            completedTasks.forEach(task => renderTaskItem(completedContainer, task, 'admin-view'));
+        }
+    });
+}
+
 // --- ADMIN TASK LIST (Shows all active tasks, updates instantly when staff completes) ---
 function loadAdminTasks() {
     const adminTaskList = document.getElementById('admin-task-list');
@@ -983,9 +988,14 @@ function renderTaskItem(container, task, role) {
     const statusOptions = ['Pending', 'In Progress', 'Completed'];
     const recurringBadge = task.isRecurring ? '<small style="color: #DCCA87; font-weight: bold;"> [Daily]</small>' : '';
     
-    let actionsHtml = (role === 'staff')
-        ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
-        : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
+    let actionsHtml = '';
+    if (role === 'staff') {
+        actionsHtml = `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+    } else if (role === 'admin') {
+        actionsHtml = `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
+    } else if (role === 'admin-view') {
+        actionsHtml = `<span class="role">${task.status}</span>`;
+    }
     
     item.innerHTML = `<div><div class="task-title">${task.title}${recurringBadge}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
     container.appendChild(item);
@@ -1183,7 +1193,22 @@ async function calculateAvgTimes() {
     }
 }
 
-// --- 8. PERFORMANCE DASHBOARD ---
+// --- 8. ENHANCED PERFORMANCE DASHBOARD WITH REAL-TIME UPDATES ---
+function setupPerformanceListener() {
+    // Clean up existing listener
+    if (performanceUpdateListener) {
+        performanceUpdateListener();
+    }
+    
+    // Set up new listener for real-time performance updates
+    const tasksQuery = query(collection(db, 'tasks'));
+    performanceUpdateListener = onSnapshot(tasksQuery, () => {
+        if (currentView === 'admin-performance') {
+            renderPerformanceDashboard();
+        }
+    });
+}
+
 async function renderPerformanceDashboard() {
     if (currentView !== 'admin-performance') return;
     
@@ -1194,8 +1219,9 @@ async function renderPerformanceDashboard() {
         container.innerHTML = `<p>Calculating performance metrics...</p>`;
         
         const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
-        const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
-        const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
+        const tasksSnapshot = await getDocs(collection(db, 'tasks'));
+        const allTasks = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const completedTasks = allTasks.filter(task => task.status === 'Completed');
 
         let performanceData = [];
         
