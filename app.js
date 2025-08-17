@@ -1,8 +1,8 @@
-// --- 1. INITIALIZE FIREBASE ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, writeBatch, updateDoc, limit } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, addDoc, updateDoc, getDocs, limit, writeBatch } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
+// --- 1. CONFIGURATION ---
 const firebaseConfig = {
     apiKey: "AIzaSyBJkFO2l12n4hKLbNd1vEMgz87GFzH77lg",
     authDomain: "srikar-jewellers-crm.firebaseapp.com",
@@ -16,245 +16,215 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appRoot = document.getElementById('app-root');
 
-// --- GLOBAL STATE & ELEMENTS ---
-let currentUser = null;
-let currentUserRole = 'staff';
-const loginPage = document.getElementById('login-page');
-const appPage = document.getElementById('app-page');
-const loginButton = document.getElementById('login-button');
-const loginEmailInput = document.getElementById('login-email');
-const loginPasswordInput = document.getElementById('login-password');
-const loginError = document.getElementById('login-error');
+// --- 2. HTML TEMPLATES ---
+const loginTemplate = `
+<div class="login-container">
+    <div class="login-box">
+        <img src="logo.jpeg" alt="Srikar Jewellers Logo" class="logo">
+        <h1 class="login-title">Srikar Jewellers</h1><p class="login-subtitle">Staff Portal</p>
+        <div class="form-group"><label for="login-email">Email Address</label><input type="email" id="login-email"></div>
+        <div class="form-group"><label for="login-password">Password</label><input type="password" id="login-password"></div>
+        <button id="login-button" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Secure Login</button>
+        <p id="login-error"></p>
+    </div>
+</div>`;
 
-// --- PAGE NAVIGATION ---
-const showView = (viewId) => {
-    appPage.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById(viewId)?.classList.add('active');
-};
+const adminTemplate = (userData) => `
+<div class="app-container">
+    <div class="main-container">
+        <header class="header">
+            <div class="header-text"><h1>Admin Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
+            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
+        </header>
+        <main class="content-area">
+            <div class="premium-card"><h2 class="section-title">Assign New Task</h2>
+                <form id="assign-task-form" class="form-grid">
+                    <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
+                    <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
+                    <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
+                    <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
+                </form>
+                <div class="form-group"><label><input type="checkbox" id="task-recurring"> Daily Recurring Task</label></div>
+                <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
+            </div>
+            <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
+            <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"><p>Loading performance data...</p></div></div>
+        </main>
+    </div>
+</div>`;
 
-// --- AUTHENTICATION ---
+const staffTemplate = (userData) => `
+<div class="app-container">
+    <div class="main-container">
+        <header class="header">
+            <div class="header-text"><h1>Staff Dashboard</h1><p>Welcome, ${userData.name || userData.email}</p></div>
+            <nav><button id="logout-btn" class="btn btn-danger">Logout</button></nav>
+        </header>
+        <main class="content-area">
+            <div class="premium-card"><h2 class="section-title">My Attendance</h2>
+                <div class="attendance-controls">
+                    <button id="clock-in-btn" class="btn btn-primary">Clock In</button>
+                    <button id="clock-out-btn" class="btn btn-danger hidden">Clock Out</button>
+                    <div class="break-buttons">
+                        <button id="lunch-out-btn" class="btn btn-secondary disabled">Lunch Out</button><button id="lunch-in-btn" class="btn btn-secondary hidden">Lunch In</button>
+                        <button id="snack-out-btn" class="btn btn-secondary disabled">Snack Out</button><button id="snack-in-btn" class="btn btn-secondary hidden">Snack In</button>
+                    </div>
+                </div>
+                <div id="attendance-status-grid" class="stats-grid"></div>
+            </div>
+            <div class="premium-card"><h2 class="section-title">My Tasks</h2><div id="staff-task-list"></div></div>
+        </main>
+    </div>
+</div>`;
+
+// --- 3. CORE APP LOGIC ---
 onAuthStateChanged(auth, async (user) => {
     if (user) {
-        currentUser = user;
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
-            currentUser.displayName = userDoc.data().name;
-            currentUserRole = userDoc.data().role || 'staff';
+            const userData = userDoc.data();
+            if (userData.role === 'admin') renderAdminDashboard(userData);
+            else renderStaffDashboard(userData);
+        } else {
+            renderStaffDashboard({ name: user.displayName, email: user.email });
         }
-        loginPage.classList.remove('active');
-        appPage.classList.add('active');
-        setupDashboard();
-        if(currentUserRole === 'admin') checkAndCreateRecurringTasks();
     } else {
-        currentUser = null;
-        loginPage.classList.add('active');
-        appPage.classList.remove('active');
+        renderLoginPage();
     }
 });
 
-loginButton.addEventListener('click', () => {
-    signInWithEmailAndPassword(auth, loginEmailInput.value, loginPasswordInput.value)
-        .catch(() => loginError.textContent = 'Invalid email or password.');
-});
-const logout = () => signOut(auth);
+function attachGlobalListeners() {
+    appRoot.addEventListener('click', (event) => {
+        if (event.target && event.target.id === 'logout-btn') signOut(auth);
+        if (event.target && event.target.id === 'login-button') handleLogin();
+        if (event.target && event.target.id === 'assign-task-button') handleAssignTask();
+    });
 
-// --- DASHBOARD SETUP ---
-const setupDashboard = () => {
-    const headerNav = document.getElementById('header-nav');
-    const headerSubtitle = document.getElementById('header-subtitle');
-    headerNav.innerHTML = '';
-    
-    if (currentUserRole === 'admin') {
-        document.getElementById('header-title').textContent = "Admin Dashboard";
-        headerSubtitle.textContent = `Welcome, ${currentUser.displayName || currentUser.email}`;
-        headerNav.innerHTML = `
-            <button class="btn nav-btn active" data-view="admin-dashboard-view">Dashboard</button>
-            <button class="btn nav-btn" data-view="admin-performance-view">Performance</button>
-            <button id="logout-btn" class="btn btn-danger">Logout</button>`;
-        showView('admin-dashboard-view');
-        initializeAdminDashboard();
-    } else {
-        document.getElementById('header-title').textContent = "Staff Dashboard";
-        headerSubtitle.textContent = `Welcome, ${currentUser.displayName || currentUser.email}`;
-        headerNav.innerHTML = `
-            <button class="btn nav-btn active" data-view="staff-dashboard-view">My Tasks</button>
-            <button class="btn nav-btn" data-view="staff-attendance-view">Attendance</button>
-            <div id="notification-bell-container"></div>
-            <button id="logout-btn" class="btn btn-danger">Logout</button>`;
-        showView('staff-dashboard-view');
-        initializeStaffDashboard();
+    appRoot.addEventListener('change', (event) => {
+        if (event.target && event.target.classList.contains('task-status-selector')) {
+            handleStatusChange(event.target.dataset.taskid, event.target.value);
+        }
+    });
+}
+attachGlobalListeners();
+
+// --- 4. RENDER FUNCTIONS ---
+function renderLoginPage() {
+    appRoot.innerHTML = loginTemplate;
+}
+
+function renderAdminDashboard(userData) {
+    appRoot.innerHTML = adminTemplate(userData);
+    populateStaffDropdown();
+    loadAdminTasks();
+    renderPerformanceDashboard();
+}
+
+function renderStaffDashboard(userData) {
+    appRoot.innerHTML = staffTemplate(userData);
+    loadStaffTasks(auth.currentUser);
+    setupAttendancePage(auth.currentUser);
+}
+
+// --- 5. EVENT HANDLERS & LOGIC ---
+async function handleLogin() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const errorEl = document.getElementById('login-error');
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+        errorEl.textContent = 'Invalid email or password.';
     }
-    
-    headerNav.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            headerNav.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            showView(e.target.dataset.view);
-        });
-    });
-    headerNav.querySelector('#logout-btn').addEventListener('click', logout);
-};
+}
 
-// --- ADMIN FEATURES ---
-const initializeAdminDashboard = () => {
-    const assignTaskButton = document.getElementById('assign-task-button');
-    assignTaskButton.addEventListener('click', async () => {
-        const assignedToUID = document.getElementById('task-assignee').value;
-        const assigneeSelect = document.getElementById('task-assignee');
-        const assignedToName = assigneeSelect.options[assigneeSelect.selectedIndex].text;
+async function handleAssignTask() {
+    const assigneeSelectEl = document.getElementById('task-assignee');
+    const deadlineInput = document.getElementById('task-deadline');
+    const taskData = {
+        title: document.getElementById('task-title').value.trim(),
+        assignedToUID: assigneeSelectEl.value,
+        assignedToName: assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text,
+        priority: document.getElementById('task-priority').value,
+        status: 'Pending',
+        createdAt: serverTimestamp(),
+        deadline: deadlineInput.value ? Timestamp.fromDate(new Date(deadlineInput.value)) : null
+    };
+    if (!taskData.title || !taskData.assignedToUID) return alert('Title and Assignee are required.');
+    await addDoc(collection(db, 'tasks'), taskData);
+    alert('Task assigned successfully!');
+    document.getElementById('assign-task-form').reset();
+}
 
-        const task = {
-            title: document.getElementById('task-title').value,
-            assignedToUID: assignedToUID,
-            assignedToName: assignedToName,
-            priority: document.getElementById('task-priority').value,
-            deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
-            isRecurring: document.getElementById('task-recurring').checked,
-            status: 'Pending',
-            createdAt: serverTimestamp()
-        };
-        if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) return alert('Title, Assignee, and Deadline are required.');
-        
-        const taskRef = await addDoc(collection(db, 'tasks'), task);
-        
-        await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
-            message: `New task assigned: "${task.title}"`,
-            isRead: false,
-            createdAt: serverTimestamp()
-        });
-        alert('Task assigned successfully!');
-        document.getElementById('assign-task-form').reset();
-    });
+function handleStatusChange(taskId, newStatus) {
+    const taskRef = doc(db, 'tasks', taskId);
+    const updateData = { status: newStatus };
+    if (newStatus === 'Completed') updateData.completedAt = serverTimestamp();
+    updateDoc(taskRef, updateData);
+}
 
+function populateStaffDropdown() {
+    const assigneeSelect = document.getElementById('task-assignee');
     onSnapshot(collection(db, 'users'), snapshot => {
-        const assigneeSelect = document.getElementById('task-assignee');
         assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
         snapshot.forEach(doc => {
-            const user = doc.data();
-            if (user.role !== 'admin') {
-                assigneeSelect.innerHTML += `<option value="${user.uid}">${user.name || user.email}</option>`;
+            if (doc.data().role !== 'admin') {
+                assigneeSelect.innerHTML += `<option value="${doc.id}">${doc.data().name || doc.data().email}</option>`;
             }
         });
     });
+}
 
+function loadAdminTasks() {
     const adminTaskList = document.getElementById('admin-task-list');
-    onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
+    const q = query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc'));
+    onSnapshot(q, snapshot => {
         adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
-        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }));
+        snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }, 'admin'));
     });
-    
-    document.querySelector('[data-view="admin-performance-view"]').addEventListener('click', renderPerformanceDashboard);
-};
+}
 
-// --- STAFF FEATURES ---
-const initializeStaffDashboard = () => {
+function loadStaffTasks(user) {
     const staffTaskList = document.getElementById('staff-task-list');
-    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', currentUser.uid), orderBy('deadline', 'asc'));
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid), orderBy('createdAt', 'desc'));
     onSnapshot(q, snapshot => {
         staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
-        snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
+        snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }, 'staff'));
     });
-    
-    setupNotifications();
-    document.querySelector('[data-view="staff-attendance-view"]').addEventListener('click', setupAttendancePage);
-};
+}
 
-// --- TASK RENDERING & STATUS UPDATE ---
-const renderTaskItem = (container, task) => {
+function renderTaskItem(container, task, role) {
     const item = document.createElement('div');
     item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
-    const deadline = task.deadline.toDate().toLocaleString('en-IN');
-    const statusOptions = ['Pending', 'Started', 'In Progress', 'Completed'];
-    
-    let actionsHtml = (currentUserRole === 'staff')
+    const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
+    const statusOptions = ['Pending', 'In Progress', 'Completed'];
+    let actionsHtml = (role === 'staff')
         ? `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`
         : `<div class="task-assignee-info">To: ${task.assignedToName}</div><span class="role">${task.status}</span>`;
-
-    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadline}</small></div><div>${actionsHtml}</div>`;
+    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
     container.appendChild(item);
+}
 
-    if (currentUserRole === 'staff') {
-        item.querySelector('.task-status-selector').addEventListener('change', e => {
-            const newStatus = e.target.value;
-            const taskRef = doc(db, 'tasks', task.id);
-            const updateData = { status: newStatus };
-            if (newStatus === 'Started' && !task.startedAt) updateData.startedAt = serverTimestamp();
-            if (newStatus === 'Completed' && !task.completedAt) updateData.completedAt = serverTimestamp();
-            updateDoc(taskRef, updateData);
-        });
-    }
-};
-
-// --- NOTIFICATIONS ---
-const setupNotifications = () => {
-    const bellContainer = document.getElementById('notification-bell-container');
-    bellContainer.innerHTML = `<button id="notification-bell" class="notification-bell"><i class="fas fa-bell"></i><span id="notification-dot" class="notification-dot"></span></button>`;
-    
-    const bell = document.getElementById('notification-bell');
-    const dot = document.getElementById('notification-dot');
-    const panel = document.getElementById('notification-panel');
-
-    const q = query(collection(db, 'users', currentUser.uid, 'notifications'), orderBy('createdAt', 'desc'));
-    onSnapshot(q, (snapshot) => {
-        const notifs = snapshot.docs;
-        const unreadCount = notifs.filter(d => !d.data().isRead).length;
-        dot.classList.toggle('visible', unreadCount > 0);
-        
-        const list = document.getElementById('notification-list');
-        list.innerHTML = notifs.length === 0 ? '<div class="notification-item">No new notifications.</div>' : '';
-        notifs.forEach(doc => {
-            const notif = doc.data();
-            const item = document.createElement('div');
-            item.className = `notification-item ${!notif.isRead ? 'unread' : ''}`;
-            item.innerHTML = `<p>${notif.message}</p><small>${notif.createdAt.toDate().toLocaleString('en-IN')}</small>`;
-            list.appendChild(item);
-        });
-    });
-
-    bell.addEventListener('click', async () => {
-        panel.classList.toggle('hidden');
-        if (!panel.classList.contains('hidden')) {
-            const notifsRef = collection(db, 'users', currentUser.uid, 'notifications');
-            const unreadQuery = query(notifsRef, where('isRead', '==', false));
-            const unreadSnapshot = await getDocs(unreadQuery);
-            const batch = writeBatch(db);
-            unreadSnapshot.forEach(doc => batch.update(doc.ref, { isRead: true }));
-            await batch.commit();
-        }
-    });
-};
-
-// --- ATTENDANCE ---
-const setupAttendancePage = () => {
+function setupAttendancePage(user) {
     const today = new Date().toISOString().split('T')[0];
-    const attendanceDocRef = doc(db, 'users', currentUser.uid, 'attendance', today);
+    const attendanceDocRef = doc(db, 'users', user.uid, 'attendance', today);
     const buttons = {
         clockIn: document.getElementById('clock-in-btn'), clockOut: document.getElementById('clock-out-btn'),
         lunchOut: document.getElementById('lunch-out-btn'), lunchIn: document.getElementById('lunch-in-btn'),
         snackOut: document.getElementById('snack-out-btn'), snackIn: document.getElementById('snack-in-btn')
     };
 
-    buttons.clockIn.onclick = () => setDoc(attendanceDocRef, { clockIn: serverTimestamp() }, { merge: true });
-    buttons.clockOut.onclick = () => setDoc(attendanceDocRef, { clockOut: serverTimestamp() }, { merge: true });
-    buttons.lunchOut.onclick = () => setDoc(attendanceDocRef, { lunchOut: serverTimestamp() }, { merge: true });
-    buttons.lunchIn.onclick = () => setDoc(attendanceDocRef, { lunchIn: serverTimestamp() }, { merge: true });
-    buttons.snackOut.onclick = () => setDoc(attendanceDocRef, { snackOut: serverTimestamp() }, { merge: true });
-    buttons.snackIn.onclick = () => setDoc(attendanceDocRef, { snackIn: serverTimestamp() }, { merge: true });
+    Object.entries(buttons).forEach(([key, btn]) => {
+        btn.onclick = () => setDoc(attendanceDocRef, { [key]: serverTimestamp() }, { merge: true });
+    });
 
     const grid = document.getElementById('attendance-status-grid');
     onSnapshot(attendanceDocRef, (docSnap) => {
         const data = docSnap.exists() ? docSnap.data() : {};
         const format = (ts) => ts ? ts.toDate().toLocaleTimeString('en-IN') : '--';
-        
-        grid.innerHTML = `
-            <div class="stat-card"><h3>Clock In</h3><span class="stat-number">${format(data.clockIn)}</span></div>
-            <div class="stat-card"><h3>Lunch Out</h3><span class="stat-number">${format(data.lunchOut)}</span></div>
-            <div class="stat-card"><h3>Lunch In</h3><span class="stat-number">${format(data.lunchIn)}</span></div>
-            <div class="stat-card"><h3>Snack Out</h3><span class="stat-number">${format(data.snackOut)}</span></div>
-            <div class="stat-card"><h3>Snack In</h3><span class="stat-number">${format(data.snackIn)}</span></div>
-            <div class="stat-card"><h3>Clock Out</h3><span class="stat-number">${format(data.clockOut)}</span></div>`;
-        
+        grid.innerHTML = `<div class="stat-card"><h3>Clock In</h3><span class="stat-number">${format(data.clockIn)}</span></div><div class="stat-card"><h3>Lunch Out</h3><span class="stat-number">${format(data.lunchOut)}</span></div><div class="stat-card"><h3>Lunch In</h3><span class="stat-number">${format(data.lunchIn)}</span></div><div class="stat-card"><h3>Snack Out</h3><span class="stat-number">${format(data.snackOut)}</span></div><div class="stat-card"><h3>Snack In</h3><span class="stat-number">${format(data.snackIn)}</span></div><div class="stat-card"><h3>Clock Out</h3><span class="stat-number">${format(data.clockOut)}</span></div>`;
         buttons.clockIn.classList.toggle('hidden', !!data.clockIn);
         buttons.clockOut.classList.toggle('hidden', !data.clockIn || !!data.clockOut);
         [buttons.lunchOut, buttons.snackOut].forEach(b => b.classList.toggle('disabled', !data.clockIn || !!data.clockOut));
@@ -264,106 +234,91 @@ const setupAttendancePage = () => {
         buttons.snackIn.classList.toggle('hidden', !data.snackOut || !!data.snackIn);
     });
     
-    calculateAvgTimes();
-};
+    calculateAvgTimes(user);
+}
 
-const calculateAvgTimes = async () => {
+async function calculateAvgTimes(user) {
     const avgGrid = document.getElementById('attendance-avg-grid');
-    const q = query(collection(db, 'users', currentUser.uid, 'attendance'), limit(30));
+    const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const q = query(collection(db, 'users', user.uid, 'attendance'), where('clockIn', '>=', thirtyDaysAgo));
     const snapshot = await getDocs(q);
     let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
-    
     snapshot.forEach(doc => {
         const data = doc.data();
-        if (data.lunchIn && data.lunchOut) {
-            totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
-            lunchCount++;
-        }
-        if (data.snackIn && data.snackOut) {
-            totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
-            snackCount++;
-        }
+        if (data.lunchIn && data.lunchOut) { totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000; lunchCount++; }
+        if (data.snackIn && data.snackOut) { totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000; snackCount++; }
     });
-    
     const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 0;
     const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 0;
-    
-    avgGrid.innerHTML = `
-        <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
-        <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
-};
+    avgGrid.innerHTML = `<div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div><div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
+}
 
-// --- RECURRING TASKS ---
-const checkAndCreateRecurringTasks = async () => {
-    const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
-    const today = new Date().toISOString().split('T')[0];
-    if (lastCheck === today) return;
-
-    const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
-    const snapshot = await getDocs(q);
-    const batch = writeBatch(db);
-
-    snapshot.forEach(doc => {
-        const task = doc.data();
-        const newDeadline = new Date();
-        newDeadline.setHours(23, 59, 59, 999); // End of today
-        
-        const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
-        delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
-        
-        const newTaskRef = doc(collection(db, 'tasks'));
-        batch.set(newTaskRef, newTask);
-        batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
-    });
-    
-    if (!snapshot.empty) await batch.commit();
-    localStorage.setItem('lastRecurringTaskCheck', today);
-};
-
-
-// --- PERFORMANCE DASHBOARD (ADMIN) ---
-const renderPerformanceDashboard = async () => {
+async function renderPerformanceDashboard() {
     const container = document.getElementById('performance-table-container');
     container.innerHTML = `<p>Calculating performance metrics...</p>`;
     
     const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
     const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
-    const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
+    const completedTasks = tasksSnapshot.docs.map(doc => ({...doc.data(), id: doc.id}));
 
     let performanceData = [];
+    const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
     for (const userDoc of usersSnapshot.docs) {
         const user = userDoc.data();
-        const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
+        const attendanceQuery = query(collection(db, 'users', user.uid, 'attendance'), where('clockIn', '>=', thirtyDaysAgo));
+        const attendanceSnapshot = await getDocs(attendanceQuery);
         
-        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
-        const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
-        
-        // Simplified scoring: more tasks = better, less time = better
-        const score = (userTasks.length * 10) - avgCompletionHours;
+        let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0, totalInTimeMins = 0, inTimeCount = 0;
+        attendanceSnapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.lunchIn && data.lunchOut) { totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000; lunchCount++; }
+            if (data.snackIn && data.snackOut) { totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000; snackCount++; }
+            if (data.clockIn) {
+                const clockInDate = data.clockIn.toDate();
+                totalInTimeMins += clockInDate.getHours() * 60 + clockInDate.getMinutes();
+                inTimeCount++;
+            }
+        });
+
+        const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 'N/A';
+        const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 'N/A';
+        let avgInTime = 'N/A';
+        if (inTimeCount > 0) {
+            const avgTotalMins = totalInTimeMins / inTimeCount;
+            const hours = Math.floor(avgTotalMins / 60);
+            const minutes = Math.round(avgTotalMins % 60);
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours % 12 || 12;
+            const displayMinutes = minutes < 10 ? '0' + minutes : minutes;
+            avgInTime = `${displayHours}:${displayMinutes} ${ampm}`;
+        }
         
         performanceData.push({
             name: user.name || user.email,
-            tasksCompleted: userTasks.length,
-            avgTime: avgCompletionHours.toFixed(2),
-            score
+            tasksCompleted: completedTasks.filter(t => t.assignedToUID === user.uid).length,
+            avgLunch,
+            avgSnack,
+            avgInTime
         });
     }
 
-    performanceData.sort((a, b) => b.score - a.score);
+    performanceData.sort((a, b) => b.tasksCompleted - a.tasksCompleted);
 
     container.innerHTML = `
         <table class="performance-table">
-            <thead><tr><th>Rank</th><th>Staff Name</th><th>Tasks Completed</th><th>Avg. Completion (Hours)</th></tr></thead>
+            <thead><tr><th>Rank</th><th>Staff</th><th>Tasks Done</th><th>Avg. Clock-In</th><th>Avg. Lunch</th><th>Avg. Snack</th></tr></thead>
             <tbody>
-                ${performanceData.length === 0 ? '<tr><td colspan="4">No completed tasks with performance data yet.</td></tr>' : 
-                  performanceData.map((p, index) => `
+                ${performanceData.map((p, index) => `
                     <tr>
                         <td class="rank">#${index + 1}</td>
                         <td>${p.name}</td>
                         <td>${p.tasksCompleted}</td>
-                        <td>${p.avgTime}</td>
+                        <td>${p.avgInTime}</td>
+                        <td>${p.avgLunch} min</td>
+                        <td>${p.avgSnack} min</td>
                     </tr>
                 `).join('')}
             </tbody>
         </table>`;
-};
+}
