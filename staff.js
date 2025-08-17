@@ -7,18 +7,17 @@ onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists() && userDoc.data().role === 'admin') {
-            window.location.href = './admin.html'; // Redirect admins
+            window.location.href = './admin.html';
         } else {
             initializeStaffDashboard(user, userDoc.exists() ? userDoc.data() : { email: user.email });
         }
     } else {
-        window.location.href = './index.html'; // Redirect if not logged in
+        window.location.href = './index.html';
     }
 });
 
 const initializeStaffDashboard = (user, userData) => {
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
-    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
     
     // View navigation
     const navButtons = document.querySelectorAll('.nav-btn');
@@ -32,19 +31,19 @@ const initializeStaffDashboard = (user, userData) => {
         });
     });
 
-    // Load staff tasks
+    // --- My Tasks Logic ---
     const staffTaskList = document.getElementById('staff-task-list');
     const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid), orderBy('deadline', 'asc'));
     onSnapshot(q, snapshot => {
-        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
+        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no active tasks.</p>' : '';
         snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
     });
     
     setupNotifications(user);
-    setupAttendancePage(user); // Initialize attendance logic when dashboard loads
+    setupAttendancePage(user);
 };
 
-// Renders a single task item for the staff list
+// --- TASK RENDERING & STATUS UPDATE ---
 const renderTaskItem = (container, task) => {
     const item = document.createElement('div');
     item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
@@ -66,10 +65,10 @@ const renderTaskItem = (container, task) => {
     });
 };
 
-// Sets up the notification bell and panel
+// --- NOTIFICATIONS ---
 const setupNotifications = (user) => {
     const bellContainer = document.getElementById('notification-bell-container');
-    if(!bellContainer) return;
+    if (!bellContainer) return;
     bellContainer.innerHTML = `<button id="notification-bell" class="notification-bell"><i class="fas fa-bell"></i><span id="notification-dot" class="notification-dot"></span></button>`;
     
     const bell = document.getElementById('notification-bell');
@@ -80,7 +79,7 @@ const setupNotifications = (user) => {
     onSnapshot(q, (snapshot) => {
         const notifs = snapshot.docs;
         const unreadCount = notifs.filter(d => !d.data().isRead).length;
-        dot.classList.toggle('visible', unreadCount > <strong>0</strong>);
+        dot.classList.toggle('visible', unreadCount > 0);
         
         const list = document.getElementById('notification-list');
         list.innerHTML = notifs.length === 0 ? '<div class="notification-item">No new notifications.</div>' : '';
@@ -106,7 +105,7 @@ const setupNotifications = (user) => {
     });
 };
 
-// Sets up the attendance page logic
+// --- ATTENDANCE ---
 const setupAttendancePage = (user) => {
     const today = new Date().toISOString().split('T')[0];
     const attendanceDocRef = doc(db, 'users', user.uid, 'attendance', today);
@@ -148,7 +147,6 @@ const setupAttendancePage = (user) => {
     calculateAvgTimes(user);
 };
 
-// Calculates average break times for the staff member
 const calculateAvgTimes = async (user) => {
     const avgGrid = document.getElementById('attendance-avg-grid');
     const thirtyDaysAgo = new Date();
@@ -176,3 +174,10 @@ const calculateAvgTimes = async (user) => {
         <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
         <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
 };
+
+// --- GLOBAL LOGOUT LISTENER (ROBUST METHOD) ---
+document.addEventListener('click', (event) => {
+    if (event.target && event.target.id === 'logout-btn') {
+        signOut(auth);
+    }
+});
