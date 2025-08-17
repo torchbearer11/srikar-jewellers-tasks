@@ -7,17 +7,19 @@ onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists() && userDoc.data().role === 'admin') {
-            window.location.href = './admin.html'; // Redirect admins
+            window.location.href = './admin.html';
         } else {
             initializeStaffDashboard(user, userDoc.exists() ? userDoc.data() : { email: user.email });
         }
     } else {
-        window.location.href = './index.html'; // Redirect if not logged in
+        window.location.href = './index.html';
     }
 });
 
 const initializeStaffDashboard = (user, userData) => {
+    // CORRECTED: Personalized welcome message
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
+    // CORRECTED: Logout button listener
     document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
     
     // View navigation
@@ -44,4 +46,4 @@ const initializeStaffDashboard = (user, userData) => {
     document.querySelector('[data-view="staff-attendance-view"]').addEventListener('click', () => setupAttendancePage(user));
 };
 
-// ... (All staff helper functions: renderTaskItem, setupNotifications, setupAttendancePage, etc.)
+// ... (All other staff helper functions from previous complete version: renderTaskItem, setupNotifications, setupAttendancePage, etc.)
