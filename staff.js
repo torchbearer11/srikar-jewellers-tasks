@@ -2,9 +2,11 @@ import { auth, db } from './common.js';
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 import { collection, doc, onSnapshot, query, where, orderBy, updateDoc, writeBatch, getDocs, limit, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
 
-// Page Protection and Initialization
+let currentUser = null;
+
 onAuthStateChanged(auth, async (user) => {
     if (user) {
+        currentUser = user;
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists() && userDoc.data().role === 'admin') {
             window.location.href = './admin.html';
@@ -16,8 +18,9 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-const initializeStaffDashboard = (user, userData) => {
+function initializeStaffDashboard(user, userData) {
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
+    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
     
     // View navigation
     const navButtons = document.querySelectorAll('.nav-btn');
@@ -26,33 +29,37 @@ const initializeStaffDashboard = (user, userData) => {
         btn.addEventListener('click', (e) => {
             navButtons.forEach(b => b.classList.remove('active'));
             e.currentTarget.classList.add('active');
-            views.forEach(v => v.classList.add('hidden'));
-            document.getElementById(e.currentTarget.dataset.view)?.classList.remove('hidden');
+            views.forEach(v => {
+                v.classList.remove('active');
+                v.classList.add('hidden');
+            });
+            const viewId = e.currentTarget.dataset.view;
+            document.getElementById(viewId)?.classList.remove('hidden');
+            document.getElementById(viewId)?.classList.add('active');
         });
     });
 
-    // --- My Tasks Logic ---
+    // Load staff tasks
     const staffTaskList = document.getElementById('staff-task-list');
-    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid), orderBy('deadline', 'asc'));
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid), orderBy('createdAt', 'desc'));
     onSnapshot(q, snapshot => {
-        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no active tasks.</p>' : '';
+        staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
         snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
     });
     
     setupNotifications(user);
     setupAttendancePage(user);
-};
+}
 
-// --- TASK RENDERING & STATUS UPDATE ---
-const renderTaskItem = (container, task) => {
+function renderTaskItem(container, task) {
     const item = document.createElement('div');
     item.className = `task-item ${task.priority.replace(' ', '-')} ${task.status}`;
-    const deadline = task.deadline.toDate().toLocaleString('en-IN');
+    const deadlineText = task.deadline ? task.deadline.toDate().toLocaleString('en-IN') : 'No deadline';
     const statusOptions = ['Pending', 'Started', 'In Progress', 'Completed'];
     
     let actionsHtml = `<select class="task-status-selector" data-taskid="${task.id}">${statusOptions.map(opt => `<option value="${opt}" ${task.status === opt ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
 
-    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadline}</small></div><div>${actionsHtml}</div>`;
+    item.innerHTML = `<div><div class="task-title">${task.title}</div><small>Deadline: ${deadlineText}</small></div><div>${actionsHtml}</div>`;
     container.appendChild(item);
 
     item.querySelector('.task-status-selector').addEventListener('change', e => {
@@ -63,12 +70,11 @@ const renderTaskItem = (container, task) => {
         if (newStatus === 'Completed' && !task.completedAt) updateData.completedAt = serverTimestamp();
         updateDoc(taskRef, updateData);
     });
-};
+}
 
-// --- NOTIFICATIONS ---
-const setupNotifications = (user) => {
+function setupNotifications(user) {
     const bellContainer = document.getElementById('notification-bell-container');
-    if (!bellContainer) return;
+    if(!bellContainer) return;
     bellContainer.innerHTML = `<button id="notification-bell" class="notification-bell"><i class="fas fa-bell"></i><span id="notification-dot" class="notification-dot"></span></button>`;
     
     const bell = document.getElementById('notification-bell');
@@ -103,10 +109,9 @@ const setupNotifications = (user) => {
             await batch.commit();
         }
     });
-};
+}
 
-// --- ATTENDANCE ---
-const setupAttendancePage = (user) => {
+function setupAttendancePage(user) {
     const today = new Date().toISOString().split('T')[0];
     const attendanceDocRef = doc(db, 'users', user.uid, 'attendance', today);
     const buttons = {
@@ -145,9 +150,9 @@ const setupAttendancePage = (user) => {
     });
     
     calculateAvgTimes(user);
-};
+}
 
-const calculateAvgTimes = async (user) => {
+async function calculateAvgTimes(user) {
     const avgGrid = document.getElementById('attendance-avg-grid');
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -173,11 +178,4 @@ const calculateAvgTimes = async (user) => {
     avgGrid.innerHTML = `
         <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
         <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
-};
-
-// --- GLOBAL LOGOUT LISTENER (ROBUST METHOD) ---
-document.addEventListener('click', (event) => {
-    if (event.target && event.target.id === 'logout-btn') {
-        signOut(auth);
-    }
-});
+}
