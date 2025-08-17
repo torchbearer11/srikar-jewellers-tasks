@@ -6,66 +6,102 @@ import { collection, doc, addDoc, getDoc, getDocs, onSnapshot, query, where, ord
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
-        const role = userDoc.exists() ? userDoc.data().role : 'staff';
-        if (role !== 'admin') {
-            window.location.href = './staff.html';
+        if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+            window.location.href = './staff.html'; // Redirect non-admins
         } else {
             initializeAdminDashboard(user, userDoc.data());
         }
     } else {
-        window.location.href = './index.html';
+        window.location.href = './index.html'; // Redirect if not logged in
     }
 });
 
 const initializeAdminDashboard = (user, userData) => {
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
+    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
 
     // View navigation
     const navButtons = document.querySelectorAll('.nav-btn');
     const views = document.querySelectorAll('.view');
     navButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
             navButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+            e.currentTarget.classList.add('active');
             views.forEach(v => v.classList.add('hidden'));
-            document.getElementById(btn.dataset.view)?.classList.add('hidden'); // Fix: should be remove
-            document.getElementById(btn.dataset.view)?.classList.remove('hidden'); // Correct
+            document.getElementById(e.currentTarget.dataset.view)?.classList.remove('hidden');
         });
     });
 
-    // --- Task Assignment Logic ---
-    const assignTaskButton = document.getElementById('assign-task-button');
-    assignTaskButton.addEventListener('click', async () => { /* ... same as before ... */ });
-
+    // Populate staff dropdown for task assignment
+    const assigneeSelect = document.getElementById('task-assignee');
     onSnapshot(collection(db, 'users'), snapshot => {
-        const assigneeSelect = document.getElementById('task-assignee');
         assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
         snapshot.forEach(doc => {
-            const user = doc.data();
-            if (user.role !== 'admin') {
-                assigneeSelect.innerHTML += `<option value="${user.uid}">${user.name || user.email}</option>`;
+            const staff = doc.data();
+            if (staff.role !== 'admin') {
+                assigneeSelect.innerHTML += `<option value="${staff.uid}">${staff.name || staff.email}</option>`;
             }
         });
     });
     
-    onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => { /* ... load admin tasks ... */ });
+    // Assign Task button logic
+    document.getElementById('assign-task-button').addEventListener('click', async () => {
+        const assignedToUID = document.getElementById('task-assignee').value;
+        const assigneeSelectEl = document.getElementById('task-assignee');
+        const assignedToName = assigneeSelectEl.options[assigneeSelectEl.selectedIndex].text;
 
-    // --- Create Staff Logic ---
-    const createStaffButton = document.getElementById('create-staff-button');
-    createStaffButton.addEventListener('click', async () => {
+        const task = {
+            title: document.getElementById('task-title').value,
+            assignedToUID: assignedToUID,
+            assignedToName: assignedToName,
+            priority: document.getElementById('task-priority').value,
+            deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
+            isRecurring: document.getElementById('task-recurring').checked,
+            status: 'Pending',
+            createdAt: serverTimestamp()
+        };
+        if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) {
+            return alert('Title, Assignee, and Deadline are required.');
+        }
+        
+        const taskRef = await addDoc(collection(db, 'tasks'), task);
+        
+        await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
+            message: `New task assigned: "${task.title}"`,
+            isRead: false,
+            createdAt: serverTimestamp()
+        });
+        alert('Task assigned successfully!');
+        document.getElementById('assign-task-form').reset();
+    });
+
+    // Load tasks for admin dashboard
+    const adminTaskList = document.getElementById('admin-task-list');
+    onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
+        adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
+        snapshot.docs.forEach(doc => {
+            const item = document.createElement('div');
+            item.className = `task-item ${doc.data().priority.replace(' ', '-')} ${doc.data().status}`;
+            item.innerHTML = `<div><div class="task-title">${doc.data().title}</div><small>To: ${doc.data().assignedToName}</small></div><span class="role">${doc.data().status}</span>`;
+            adminTaskList.appendChild(item);
+        });
+    });
+    
+    // Create Staff button logic
+    document.getElementById('create-staff-button').addEventListener('click', async () => {
         const name = document.getElementById('staff-name').value;
         const email = document.getElementById('staff-email').value;
         const password = document.getElementById('staff-password').value;
-        if (!name || !email || !password) return alert('All fields are required.');
+        if (!name || !email || password.length < 6) return alert('All fields are required. Password must be 6+ characters.');
+        
         try {
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            // We create a temporary auth instance to not log out the admin
+            const tempApp = initializeApp(firebaseConfig, 'Secondary');
+            const tempAuth = getAuth(tempApp);
+            const userCredential = await createUserWithEmailAndPassword(tempAuth, email, password);
+            
             await setDoc(doc(db, "users", userCredential.user.uid), {
-                uid: userCredential.user.uid,
-                name: name,
-                email: email,
-                role: 'staff',
-                isActive: true,
-                createdAt: serverTimestamp()
+                uid: userCredential.user.uid, name, email, role: 'staff', isActive: true, createdAt: serverTimestamp()
             });
             alert(`Staff account for ${name} created successfully!`);
             document.getElementById('create-staff-form').reset();
@@ -74,16 +110,58 @@ const initializeAdminDashboard = (user, userData) => {
         }
     });
 
-    // --- Performance View Logic ---
+    // Performance View Logic
     document.querySelector('[data-view="admin-performance-view"]').addEventListener('click', renderPerformanceDashboard);
 };
 
-// --- GLOBAL LOGOUT LISTENER (MORE ROBUST) ---
-document.addEventListener('click', (event) => {
-    if (event.target && event.target.id === 'logout-btn') {
-        signOut(auth);
-    }
-});
+// --- PERFORMANCE DASHBOARD RENDER ---
+const renderPerformanceDashboard = async () => {
+    const container = document.getElementById('performance-table-container');
+    container.innerHTML = `<p>Calculating performance metrics...</p>`;
+    
+    const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
+    const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
+    const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
 
-const renderPerformanceDashboard = async () => { /* ... same as before ... */ };
-// ... (All other admin helper functions from the previous complete version)
+    let performanceData = [];
+    for (const userDoc of usersSnapshot.docs) {
+        const user = userDoc.data();
+        
+        // Task Metrics
+        const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
+        const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // hours
+        const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
+        
+        // Attendance Metrics
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const attendanceQuery = query(collection(db, 'users', user.uid, 'attendance'), where('clockIn', '>=', thirtyDaysAgo));
+        const attendanceSnapshot = await getDocs(attendanceQuery);
+        let daysClockedIn = attendanceSnapshot.size;
+        
+        performanceData.push({
+            name: user.name || user.email,
+            tasksCompleted: userTasks.length,
+            avgTaskTime: avgCompletionHours.toFixed(2),
+            attendanceDays: daysClockedIn,
+        });
+    }
+
+    performanceData.sort((a, b) => b.tasksCompleted - a.tasksCompleted); 
+
+    container.innerHTML = `
+        <table class="performance-table">
+            <thead><tr><th>Rank</th><th>Staff</th><th>Tasks Done (all time)</th><th>Avg. Task Time (Hrs)</th><th>Days Present (Last 30)</th></tr></thead>
+            <tbody>
+                ${performanceData.map((p, index) => `
+                    <tr>
+                        <td class="rank">#${index + 1}</td>
+                        <td>${p.name}</td>
+                        <td>${p.tasksCompleted}</td>
+                        <td>${p.avgTaskTime}</td>
+                        <td>${p.attendanceDays}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>`;
+};
