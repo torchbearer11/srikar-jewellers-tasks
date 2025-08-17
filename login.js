@@ -7,6 +7,7 @@ const loginEmailInput = document.getElementById('login-email');
 const loginPasswordInput = document.getElementById('login-password');
 const loginError = document.getElementById('login-error');
 
+// Redirect user if they are already logged in
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
@@ -15,12 +16,11 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
+// Handle login button click
 loginButton.addEventListener('click', async () => {
     try {
-        const userCredential = await signInWithEmailAndPassword(auth, loginEmailInput.value, loginPasswordInput.value);
-        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-        const role = userDoc.exists() ? userDoc.data().role : 'staff';
-        window.location.href = (role === 'admin') ? './admin.html' : './staff.html';
+        await signInWithEmailAndPassword(auth, loginEmailInput.value, loginPasswordInput.value);
+        // The onAuthStateChanged listener above will handle the redirect
     } catch (error) {
         loginError.textContent = 'Invalid email or password.';
     }
