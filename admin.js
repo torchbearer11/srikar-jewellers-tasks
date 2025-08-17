@@ -19,8 +19,6 @@ onAuthStateChanged(auth, async (user) => {
 
 const initializeAdminDashboard = (user, userData) => {
     document.getElementById('header-subtitle').textContent = `Welcome, ${userData.name || user.email}`;
-    // CORRECTED: Logout button listener
-    document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
 
     // View navigation
     const navButtons = document.querySelectorAll('.nav-btn');
@@ -30,11 +28,15 @@ const initializeAdminDashboard = (user, userData) => {
             navButtons.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             views.forEach(v => v.classList.add('hidden'));
-            document.getElementById(btn.dataset.view)?.classList.remove('hidden');
+            document.getElementById(btn.dataset.view)?.classList.add('hidden'); // Fix: should be remove
+            document.getElementById(btn.dataset.view)?.classList.remove('hidden'); // Correct
         });
     });
 
-    // CORRECTED: Staff dropdown now populates correctly
+    // --- Task Assignment Logic ---
+    const assignTaskButton = document.getElementById('assign-task-button');
+    assignTaskButton.addEventListener('click', async () => { /* ... same as before ... */ });
+
     onSnapshot(collection(db, 'users'), snapshot => {
         const assigneeSelect = document.getElementById('task-assignee');
         assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
@@ -45,10 +47,7 @@ const initializeAdminDashboard = (user, userData) => {
             }
         });
     });
-
-    // --- Task Assignment Logic ---
-    const assignTaskButton = document.getElementById('assign-task-button');
-    assignTaskButton.addEventListener('click', async () => { /* ... same as before ... */ });
+    
     onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => { /* ... load admin tasks ... */ });
 
     // --- Create Staff Logic ---
@@ -79,5 +78,12 @@ const initializeAdminDashboard = (user, userData) => {
     document.querySelector('[data-view="admin-performance-view"]').addEventListener('click', renderPerformanceDashboard);
 };
 
+// --- GLOBAL LOGOUT LISTENER (MORE ROBUST) ---
+document.addEventListener('click', (event) => {
+    if (event.target && event.target.id === 'logout-btn') {
+        signOut(auth);
+    }
+});
+
 const renderPerformanceDashboard = async () => { /* ... same as before ... */ };
-// ... (All other admin helper functions from previous complete version)
+// ... (All other admin helper functions from the previous complete version)
