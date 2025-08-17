@@ -1,4 +1,4 @@
-<!-- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -75,6 +75,7 @@
         .task-item.Urgent { border-left-color: var(--priority-high); }
         .task-item.Important { border-left-color: var(--priority-medium); }
         .task-item.Not-Important { border-left-color: var(--priority-low); }
+        .task-item.Completed { opacity: 0.7; }
         .task-title { font-weight: 600; color: var(--text-primary); }
         .role { font-weight: 600; text-transform: capitalize; }
 
@@ -228,6 +229,14 @@
             signInWithEmailAndPassword(auth, loginEmailInput.value, loginPasswordInput.value)
                 .catch(() => loginError.textContent = 'Invalid email or password.');
         });
+
+        // Add Enter key support for login
+        loginPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loginButton.click();
+            }
+        });
+
         const logout = () => signOut(auth);
 
         // --- DASHBOARD SETUP ---
@@ -271,33 +280,44 @@
         const initializeAdminDashboard = () => {
             const assignTaskButton = document.getElementById('assign-task-button');
             assignTaskButton.addEventListener('click', async () => {
-                const assignedToUID = document.getElementById('task-assignee').value;
-                const assigneeSelect = document.getElementById('task-assignee');
-                const assignedToName = assigneeSelect.options[assigneeSelect.selectedIndex].text;
+                try {
+                    const assignedToUID = document.getElementById('task-assignee').value;
+                    const assigneeSelect = document.getElementById('task-assignee');
+                    const assignedToName = assigneeSelect.options[assigneeSelect.selectedIndex].text;
 
-                const task = {
-                    title: document.getElementById('task-title').value,
-                    assignedToUID: assignedToUID,
-                    assignedToName: assignedToName,
-                    priority: document.getElementById('task-priority').value,
-                    deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
-                    isRecurring: document.getElementById('task-recurring').checked,
-                    status: 'Pending',
-                    createdAt: serverTimestamp()
-                };
-                if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) return alert('Title, Assignee, and Deadline are required.');
-                
-                const taskRef = await addDoc(collection(db, 'tasks'), task);
-                
-                await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
-                    message: `New task assigned: "${task.title}"`,
-                    isRead: false,
-                    createdAt: serverTimestamp()
-                });
-                alert('Task assigned successfully!');
-                document.getElementById('assign-task-form').reset();
+                    const task = {
+                        title: document.getElementById('task-title').value,
+                        assignedToUID: assignedToUID,
+                        assignedToName: assignedToName,
+                        priority: document.getElementById('task-priority').value,
+                        deadline: Timestamp.fromDate(new Date(document.getElementById('task-deadline').value)),
+                        isRecurring: document.getElementById('task-recurring').checked,
+                        status: 'Pending',
+                        createdAt: serverTimestamp()
+                    };
+                    
+                    if (!task.title || !task.assignedToUID || !document.getElementById('task-deadline').value) {
+                        alert('Title, Assignee, and Deadline are required.');
+                        return;
+                    }
+                    
+                    const taskRef = await addDoc(collection(db, 'tasks'), task);
+                    
+                    await addDoc(collection(db, 'users', task.assignedToUID, 'notifications'), {
+                        message: `New task assigned: "${task.title}"`,
+                        isRead: false,
+                        createdAt: serverTimestamp()
+                    });
+                    
+                    alert('Task assigned successfully!');
+                    document.getElementById('assign-task-form').reset();
+                } catch (error) {
+                    console.error('Error assigning task:', error);
+                    alert('Error assigning task. Please try again.');
+                }
             });
 
+            // Load staff list for task assignment
             onSnapshot(collection(db, 'users'), snapshot => {
                 const assigneeSelect = document.getElementById('task-assignee');
                 assigneeSelect.innerHTML = '<option value="">Select Staff...</option>';
@@ -309,8 +329,9 @@
                 });
             });
 
+            // Load active tasks for admin view (non-completed tasks only)
             const adminTaskList = document.getElementById('admin-task-list');
-            onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed')), snapshot => {
+            onSnapshot(query(collection(db, 'tasks'), where('status', '!=', 'Completed'), orderBy('createdAt', 'desc')), snapshot => {
                 adminTaskList.innerHTML = snapshot.empty ? '<p>No active tasks.</p>' : '';
                 snapshot.docs.forEach(doc => renderTaskItem(adminTaskList, { id: doc.id, ...doc.data() }));
             });
@@ -321,7 +342,14 @@
         // --- STAFF FEATURES ---
         const initializeStaffDashboard = () => {
             const staffTaskList = document.getElementById('staff-task-list');
-            const q = query(collection(db, 'tasks'), where('assignedToUID', '==', currentUser.uid), orderBy('deadline', 'asc'));
+            
+            // FIXED: Show ALL tasks assigned to staff member, not filtering by status
+            const q = query(
+                collection(db, 'tasks'), 
+                where('assignedToUID', '==', currentUser.uid), 
+                orderBy('createdAt', 'desc')
+            );
+            
             onSnapshot(q, snapshot => {
                 staffTaskList.innerHTML = snapshot.empty ? '<p>You have no tasks assigned.</p>' : '';
                 snapshot.docs.forEach(doc => renderTaskItem(staffTaskList, { id: doc.id, ...doc.data() }));
@@ -346,13 +374,20 @@
             container.appendChild(item);
 
             if (currentUserRole === 'staff') {
-                item.querySelector('.task-status-selector').addEventListener('change', e => {
-                    const newStatus = e.target.value;
-                    const taskRef = doc(db, 'tasks', task.id);
-                    const updateData = { status: newStatus };
-                    if (newStatus === 'Started' && !task.startedAt) updateData.startedAt = serverTimestamp();
-                    if (newStatus === 'Completed' && !task.completedAt) updateData.completedAt = serverTimestamp();
-                    updateDoc(taskRef, updateData);
+                item.querySelector('.task-status-selector').addEventListener('change', async (e) => {
+                    try {
+                        const newStatus = e.target.value;
+                        const taskRef = doc(db, 'tasks', task.id);
+                        const updateData = { status: newStatus };
+                        
+                        if (newStatus === 'Started' && !task.startedAt) updateData.startedAt = serverTimestamp();
+                        if (newStatus === 'Completed' && !task.completedAt) updateData.completedAt = serverTimestamp();
+                        
+                        await updateDoc(taskRef, updateData);
+                    } catch (error) {
+                        console.error('Error updating task status:', error);
+                        alert('Error updating task status. Please try again.');
+                    }
                 });
             }
         };
@@ -378,7 +413,7 @@
                     const notif = doc.data();
                     const item = document.createElement('div');
                     item.className = `notification-item ${!notif.isRead ? 'unread' : ''}`;
-                    item.innerHTML = `<p>${notif.message}</p><small>${notif.createdAt.toDate().toLocaleString('en-IN')}</small>`;
+                    item.innerHTML = `<p>${notif.message}</p><small>${notif.createdAt?.toDate().toLocaleString('en-IN') || 'No date'}</small>`;
                     list.appendChild(item);
                 });
             });
@@ -386,12 +421,16 @@
             bell.addEventListener('click', async () => {
                 panel.classList.toggle('hidden');
                 if (!panel.classList.contains('hidden')) {
-                    const notifsRef = collection(db, 'users', currentUser.uid, 'notifications');
-                    const unreadQuery = query(notifsRef, where('isRead', '==', false));
-                    const unreadSnapshot = await getDocs(unreadQuery);
-                    const batch = writeBatch(db);
-                    unreadSnapshot.forEach(doc => batch.update(doc.ref, { isRead: true }));
-                    await batch.commit();
+                    try {
+                        const notifsRef = collection(db, 'users', currentUser.uid, 'notifications');
+                        const unreadQuery = query(notifsRef, where('isRead', '==', false));
+                        const unreadSnapshot = await getDocs(unreadQuery);
+                        const batch = writeBatch(db);
+                        unreadSnapshot.forEach(doc => batch.update(doc.ref, { isRead: true }));
+                        if (!unreadSnapshot.empty) await batch.commit();
+                    } catch (error) {
+                        console.error('Error marking notifications as read:', error);
+                    }
                 }
             });
         };
@@ -401,18 +440,70 @@
             const today = new Date().toISOString().split('T')[0];
             const attendanceDocRef = doc(db, 'users', currentUser.uid, 'attendance', today);
             const buttons = {
-                clockIn: document.getElementById('clock-in-btn'), clockOut: document.getElementById('clock-out-btn'),
-                lunchOut: document.getElementById('lunch-out-btn'), lunchIn: document.getElementById('lunch-in-btn'),
-                snackOut: document.getElementById('snack-out-btn'), snackIn: document.getElementById('snack-in-btn')
+                clockIn: document.getElementById('clock-in-btn'), 
+                clockOut: document.getElementById('clock-out-btn'),
+                lunchOut: document.getElementById('lunch-out-btn'), 
+                lunchIn: document.getElementById('lunch-in-btn'),
+                snackOut: document.getElementById('snack-out-btn'), 
+                snackIn: document.getElementById('snack-in-btn')
             };
 
-            buttons.clockIn.onclick = () => setDoc(attendanceDocRef, { clockIn: serverTimestamp() }, { merge: true });
-            buttons.clockOut.onclick = () => setDoc(attendanceDocRef, { clockOut: serverTimestamp() }, { merge: true });
-            buttons.lunchOut.onclick = () => setDoc(attendanceDocRef, { lunchOut: serverTimestamp() }, { merge: true });
-            buttons.lunchIn.onclick = () => setDoc(attendanceDocRef, { lunchIn: serverTimestamp() }, { merge: true });
-            buttons.snackOut.onclick = () => setDoc(attendanceDocRef, { snackOut: serverTimestamp() }, { merge: true });
-            buttons.snackIn.onclick = () => setDoc(attendanceDocRef, { snackIn: serverTimestamp() }, { merge: true });
+            // Button event handlers with error handling
+            buttons.clockIn.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { clockIn: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error clocking in:', error);
+                    alert('Error clocking in. Please try again.');
+                }
+            };
+            
+            buttons.clockOut.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { clockOut: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error clocking out:', error);
+                    alert('Error clocking out. Please try again.');
+                }
+            };
+            
+            buttons.lunchOut.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { lunchOut: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error marking lunch out:', error);
+                    alert('Error marking lunch out. Please try again.');
+                }
+            };
+            
+            buttons.lunchIn.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { lunchIn: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error marking lunch in:', error);
+                    alert('Error marking lunch in. Please try again.');
+                }
+            };
+            
+            buttons.snackOut.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { snackOut: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error marking snack out:', error);
+                    alert('Error marking snack out. Please try again.');
+                }
+            };
+            
+            buttons.snackIn.onclick = async () => {
+                try {
+                    await setDoc(attendanceDocRef, { snackIn: serverTimestamp() }, { merge: true });
+                } catch (error) {
+                    console.error('Error marking snack in:', error);
+                    alert('Error marking snack in. Please try again.');
+                }
+            };
 
+            // Real-time attendance status updates
             const grid = document.getElementById('attendance-status-grid');
             onSnapshot(attendanceDocRef, (docSnap) => {
                 const data = docSnap.exists() ? docSnap.data() : {};
@@ -426,11 +517,21 @@
                     <div class="stat-card"><h3>Snack In</h3><span class="stat-number">${format(data.snackIn)}</span></div>
                     <div class="stat-card"><h3>Clock Out</h3><span class="stat-number">${format(data.clockOut)}</span></div>`;
                 
+                // Button visibility logic
                 buttons.clockIn.classList.toggle('hidden', !!data.clockIn);
                 buttons.clockOut.classList.toggle('hidden', !data.clockIn || !!data.clockOut);
-                [buttons.lunchOut, buttons.snackOut].forEach(b => b.classList.toggle('disabled', !data.clockIn || !!data.clockOut));
+                
+                // Disable break buttons if not clocked in or already clocked out
+                [buttons.lunchOut, buttons.snackOut].forEach(b => {
+                    b.classList.toggle('disabled', !data.clockIn || !!data.clockOut);
+                    b.disabled = !data.clockIn || !!data.clockOut;
+                });
+                
+                // Lunch button visibility
                 buttons.lunchOut.classList.toggle('hidden', !!data.lunchOut);
                 buttons.lunchIn.classList.toggle('hidden', !data.lunchOut || !!data.lunchIn);
+                
+                // Snack button visibility
                 buttons.snackOut.classList.toggle('hidden', !!data.snackOut);
                 buttons.snackIn.classList.toggle('hidden', !data.snackOut || !!data.snackIn);
             });
@@ -439,87 +540,14 @@
         };
 
         const calculateAvgTimes = async () => {
-            const avgGrid = document.getElementById('attendance-avg-grid');
-            const q = query(collection(db, 'users', currentUser.uid, 'attendance'), limit(30));
-            const snapshot = await getDocs(q);
-            let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
-            
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                if (data.lunchIn && data.lunchOut) {
-                    totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
-                    lunchCount++;
-                }
-                if (data.snackIn && data.snackOut) {
-                    totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
-                    snackCount++;
-                }
-            });
-            
-            const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 0;
-            const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 0;
-            
-            avgGrid.innerHTML = `
-                <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
-                <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
-        };
-
-        // --- RECURRING TASKS ---
-        const checkAndCreateRecurringTasks = async () => {
-            const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
-            const today = new Date().toISOString().split('T')[0];
-            if (lastCheck === today) return;
-
-            const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
-            const snapshot = await getDocs(q);
-            const batch = writeBatch(db);
-
-            snapshot.forEach(doc => {
-                const task = doc.data();
-                const newDeadline = new Date();
-                newDeadline.setHours(23, 59, 59, 999); // End of today
-                
-                const newTask = { ...task, deadline: Timestamp.fromDate(newDeadline), status: 'Pending', createdAt: serverTimestamp() };
-                delete newTask.id; delete newTask.startedAt; delete newTask.completedAt;
-                
-                const newTaskRef = doc(collection(db, 'tasks'));
-                batch.set(newTaskRef, newTask);
-                batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
-            });
-            
-            if (!snapshot.empty) await batch.commit();
-            localStorage.setItem('lastRecurringTaskCheck', today);
-        };
-
-        // --- ENHANCED PERFORMANCE DASHBOARD (ADMIN) ---
-        const renderPerformanceDashboard = async () => {
-            const container = document.getElementById('performance-table-container');
-            container.innerHTML = `<p>Calculating performance metrics...</p>`;
-            
-            const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
-            const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
-            const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
-
-            let performanceData = [];
-            
-            for (const userDoc of usersSnapshot.docs) {
-                const user = userDoc.data();
-                const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
-                
-                const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
-                const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
-                
-                // Calculate attendance averages
-                const attendanceQuery = query(collection(db, 'users', user.uid, 'attendance'), limit(30));
-                const attendanceSnapshot = await getDocs(attendanceQuery);
-                
+            try {
+                const avgGrid = document.getElementById('attendance-avg-grid');
+                const q = query(collection(db, 'users', currentUser.uid, 'attendance'), limit(30));
+                const snapshot = await getDocs(q);
                 let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
-                let clockInTimes = [], inTimeSum = 0, inTimeCount = 0;
                 
-                attendanceSnapshot.forEach(doc => {
+                snapshot.forEach(doc => {
                     const data = doc.data();
-                    
-                    // Calculate lunch and snack averages
                     if (data.lunchIn && data.lunchOut) {
                         totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
                         lunchCount++;
@@ -528,140 +556,177 @@
                         totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
                         snackCount++;
                     }
-                    
-                    // Calculate average in-time (clock-in time)
-                    if (data.clockIn) {
-                        const clockInTime = data.clockIn.toDate();
-                        const hours = clockInTime.getHours();
-                        const minutes = clockInTime.getMinutes();
-                        const timeInMinutes = hours * 60 + minutes;
-                        inTimeSum += timeInMinutes;
-                        inTimeCount++;
-                    }
                 });
                 
-                const avgLunchTime = lunchCount ? (totalLunchMins / lunchCount) : 0;
-                const avgSnackTime = snackCount ? (totalSnackMins / snackCount) : 0;
-                const avgInTime = inTimeCount ? (inTimeSum / inTimeCount) : 0;
+                const avgLunch = lunchCount ? (totalLunchMins / lunchCount).toFixed(0) : 0;
+                const avgSnack = snackCount ? (totalSnackMins / snackCount).toFixed(0) : 0;
                 
-                // Convert average in-time back to readable format
-                const avgInHours = Math.floor(avgInTime / 60);
-                const avgInMins = Math.round(avgInTime % 60);
-                const avgInTimeFormatted = inTimeCount ? `${avgInHours.toString().padStart(2, '0')}:${avgInMins.toString().padStart(2, '0')}` : '--';
-                
-                // Simplified scoring: more tasks = better, less time = better
-                const score = (userTasks.length * 10) - avgCompletionHours;
-                
-                performanceData.push({
-                    name: user.name || user.email,
-                    tasksCompleted: userTasks.length,
-                    avgTime: avgCompletionHours.toFixed(2),
-                    avgLunchTime: avgLunchTime.toFixed(0),
-                    avgSnackTime: avgSnackTime.toFixed(0),
-                    avgInTime: avgInTimeFormatted,
-                    score
-                });
+                avgGrid.innerHTML = `
+                    <div class="stat-card"><h3>Avg. Lunch Time</h3><span class="stat-number">${avgLunch} min</span></div>
+                    <div class="stat-card"><h3>Avg. Snack Time</h3><span class="stat-number">${avgSnack} min</span></div>`;
+            } catch (error) {
+                console.error('Error calculating average times:', error);
             }
-
-            performanceData.sort((a, b) => b.score - a.score);
-
-            container.innerHTML = `
-                <table class="performance-table">
-                    <thead>
-                        <tr>
-                            <th>Rank</th>
-                            <th>Staff Name</th>
-                            <th>Tasks Completed</th>
-                            <th>Avg. Completion (Hours)</th>
-                            <th>Avg. Lunch Time (Min)</th>
-                            <th>Avg. Snack Time (Min)</th>
-                            <th>Avg. In-Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${performanceData.length === 0 ? '<tr><td colspan="7">No completed tasks with performance data yet.</td></tr>' : 
-                          performanceData.map((p, index) => `
-                            <tr>
-                                <td class="rank">#${index + 1}</td>
-                                <td>${p.name}</td>
-                                <td>${p.tasksCompleted}</td>
-                                <td>${p.avgTime}</td>
-                                <td>${p.avgLunchTime}</td>
-                                <td>${p.avgSnackTime}</td>
-                                <td>${p.avgInTime}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>`;
         };
+
+        // --- RECURRING TASKS ---
+        const checkAndCreateRecurringTasks = async () => {
+            try {
+                const lastCheck = localStorage.getItem('lastRecurringTaskCheck');
+                const today = new Date().toISOString().split('T')[0];
+                if (lastCheck === today) return;
+
+                const q = query(collection(db, 'tasks'), where('isRecurring', '==', true), where('status', '==', 'Completed'));
+                const snapshot = await getDocs(q);
+                const batch = writeBatch(db);
+
+                snapshot.forEach(doc => {
+                    const task = doc.data();
+                    const newDeadline = new Date();
+                    newDeadline.setHours(23, 59, 59, 999); // End of today
+                    
+                    const newTask = { 
+                        ...task, 
+                        deadline: Timestamp.fromDate(newDeadline), 
+                        status: 'Pending', 
+                        createdAt: serverTimestamp() 
+                    };
+                    delete newTask.id; 
+                    delete newTask.startedAt; 
+                    delete newTask.completedAt;
+                    
+                    const newTaskRef = doc(collection(db, 'tasks'));
+                    batch.set(newTaskRef, newTask);
+                    batch.update(doc.ref, { isRecurring: false }); // Mark old one as non-recurring to avoid duplication
+                });
+                
+                if (!snapshot.empty) await batch.commit();
+                localStorage.setItem('lastRecurringTaskCheck', today);
+            } catch (error) {
+                console.error('Error creating recurring tasks:', error);
+            }
+        };
+
+        // --- ENHANCED PERFORMANCE DASHBOARD (ADMIN) ---
+        const renderPerformanceDashboard = async () => {
+            try {
+                const container = document.getElementById('performance-table-container');
+                container.innerHTML = `<p>Calculating performance metrics...</p>`;
+                
+                const usersSnapshot = await getDocs(query(collection(db, 'users'), where('role', '==', 'staff')));
+                const tasksSnapshot = await getDocs(query(collection(db, 'tasks'), where('status', '==', 'Completed')));
+                const completedTasks = tasksSnapshot.docs.map(doc => doc.data());
+
+                let performanceData = [];
+                
+                for (const userDoc of usersSnapshot.docs) {
+                    const user = userDoc.data();
+                    const userTasks = completedTasks.filter(t => t.assignedToUID === user.uid && t.startedAt && t.completedAt);
+                    
+                    const completionTimes = userTasks.map(t => (t.completedAt.toMillis() - t.startedAt.toMillis()) / 3600000); // in hours
+                    const avgCompletionHours = completionTimes.length ? (completionTimes.reduce((a, b) => a + b, 0) / completionTimes.length) : 0;
+                    
+                    // Calculate attendance averages
+                    const attendanceQuery = query(collection(db, 'users', user.uid, 'attendance'), limit(30));
+                    const attendanceSnapshot = await getDocs(attendanceQuery);
+                    
+                    let totalLunchMins = 0, lunchCount = 0, totalSnackMins = 0, snackCount = 0;
+                    let inTimeSum = 0, inTimeCount = 0;
+                    
+                    attendanceSnapshot.forEach(doc => {
+                        const data = doc.data();
+                        
+                        // Calculate lunch and snack averages
+                        if (data.lunchIn && data.lunchOut) {
+                            totalLunchMins += (data.lunchIn.toMillis() - data.lunchOut.toMillis()) / 60000;
+                            lunchCount++;
+                        }
+                        if (data.snackIn && data.snackOut) {
+                            totalSnackMins += (data.snackIn.toMillis() - data.snackOut.toMillis()) / 60000;
+                            snackCount++;
+                        }
+                        
+                        // Calculate average in-time (clock-in time)
+                        if (data.clockIn) {
+                            const clockInTime = data.clockIn.toDate();
+                            const hours = clockInTime.getHours();
+                            const minutes = clockInTime.getMinutes();
+                            const timeInMinutes = hours * 60 + minutes;
+                            inTimeSum += timeInMinutes;
+                            inTimeCount++;
+                        }
+                    });
+                    
+                    const avgLunchTime = lunchCount ? (totalLunchMins / lunchCount) : 0;
+                    const avgSnackTime = snackCount ? (totalSnackMins / snackCount) : 0;
+                    const avgInTime = inTimeCount ? (inTimeSum / inTimeCount) : 0;
+                    
+                    // Convert average in-time back to readable format
+                    const avgInHours = Math.floor(avgInTime / 60);
+                    const avgInMins = Math.round(avgInTime % 60);
+                    const avgInTimeFormatted = inTimeCount ? `${avgInHours.toString().padStart(2, '0')}:${avgInMins.toString().padStart(2, '0')}` : '--';
+                    
+                    // Simplified scoring: more tasks = better, less time = better, punctual = better
+                    const punctualityBonus = inTimeCount > 0 && avgInTime <= 540 ? 5 : 0; // Bonus for being on time (9 AM = 540 minutes)
+                    const score = (userTasks.length * 10) - avgCompletionHours + punctualityBonus;
+                    
+                    performanceData.push({
+                        name: user.name || user.email,
+                        tasksCompleted: userTasks.length,
+                        avgTime: avgCompletionHours.toFixed(2),
+                        avgLunchTime: avgLunchTime.toFixed(0),
+                        avgSnackTime: avgSnackTime.toFixed(0),
+                        avgInTime: avgInTimeFormatted,
+                        score
+                    });
+                }
+
+                performanceData.sort((a, b) => b.score - a.score);
+
+                container.innerHTML = `
+                    <table class="performance-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Staff Name</th>
+                                <th>Tasks Completed</th>
+                                <th>Avg. Completion (Hours)</th>
+                                <th>Avg. Lunch Time (Min)</th>
+                                <th>Avg. Snack Time (Min)</th>
+                                <th>Avg. In-Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${performanceData.length === 0 ? '<tr><td colspan="7">No completed tasks with performance data yet.</td></tr>' : 
+                              performanceData.map((p, index) => `
+                                <tr>
+                                    <td class="rank">#${index + 1}</td>
+                                    <td>${p.name}</td>
+                                    <td>${p.tasksCompleted}</td>
+                                    <td>${p.avgTime}</td>
+                                    <td>${p.avgLunchTime}</td>
+                                    <td>${p.avgSnackTime}</td>
+                                    <td>${p.avgInTime}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>`;
+            } catch (error) {
+                console.error('Error rendering performance dashboard:', error);
+                const container = document.getElementById('performance-table-container');
+                container.innerHTML = `<p>Error loading performance data. Please try again.</p>`;
+            }
+        };
+
+        // --- ERROR HANDLING FOR OFFLINE/NETWORK ISSUES ---
+        window.addEventListener('online', () => {
+            console.log('Back online');
+        });
+
+        window.addEventListener('offline', () => {
+            console.log('Gone offline');
+            alert('You are currently offline. Some features may not work properly.');
+        });
     </script>
-</body>
-</html>
- -->
- <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Srikar Jewellers - Staff System</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --gold-primary: #DCCA87; --gold-secondary: #F5EFE1; --dark-bg: #0C0C0C; --dark-secondary: #181818;
-            --text-primary: #FFFFFF; --text-secondary: #AAAAAA; --priority-high: #d9534f; --priority-medium: #f0ad4e;
-            --priority-low: #5cb85c; --transition-fast: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Poppins', sans-serif; background-color: var(--dark-bg); color: var(--text-secondary); min-height: 100vh; }
-        .hidden { display: none !important; }
-        .active { display: block !important; }
-        .login-container, .app-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-        .login-box { width: 100%; max-width: 450px; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 15px; padding: 3rem; text-align: center; animation: fadeIn 0.5s ease-out; }
-        .logo { width: 90px; height: 90px; border-radius: 50%; border: 3px solid var(--gold-primary); box-shadow: 0 0 25px rgba(220, 202, 135, 0.2); margin: 0 auto 1rem auto; object-fit: cover; }
-        .login-title { font-family: 'Cormorant Garamond', serif; font-size: 3rem; color: var(--gold-primary); }
-        .login-subtitle { margin-bottom: 2.5rem; font-size: 1.1rem; }
-        #login-error { color: var(--priority-high); margin-top: 1rem; min-height: 1.2em; }
-        .main-container { width: 100%; max-width: 1200px; margin: 2rem auto; background: var(--dark-secondary); border: 1px solid rgba(220, 202, 135, 0.15); border-radius: 20px; overflow: hidden; animation: fadeIn 0.5s ease-out; }
-        .header { padding: 2.5rem; background: #111111; border-bottom: 1px solid rgba(220, 202, 135, 0.15); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
-        .header-text h1 { font-family: 'Cormorant Garamond', serif; font-size: 2.5rem; color: var(--gold-primary); }
-        nav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        .content-area { padding: 2.5rem; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .section-title { font-family: 'Cormorant Garamond', serif; font-size: 2.2rem; color: var(--gold-primary); margin-bottom: 2rem; text-align: center; }
-        .premium-card { background: #111111; border: 1px solid rgba(220, 202, 135, 0.1); border-radius: 15px; padding: 2rem; margin-bottom: 2.5rem; }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; }
-        .form-group { display: flex; flex-direction: column; text-align: left; }
-        .form-group label { margin-bottom: 0.75rem; font-weight: 500; color: var(--gold-secondary); font-size: 0.9rem; text-transform: uppercase; }
-        .form-group input, .form-group select { width: 100%; padding: 0.8rem 1rem; border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 8px; font-size: 1rem; font-family: 'Poppins', sans-serif; background: var(--dark-secondary); color: var(--text-primary); transition: var(--transition-fast); }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--gold-primary); }
-        .form-group input[type="checkbox"] { width: auto; margin-right: 10px; }
-        .btn { padding: 0.8rem 1.8rem; border: 1px solid var(--gold-primary); border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; text-transform: uppercase; transition: var(--transition-fast); display: inline-flex; align-items: center; gap: 0.75rem; justify-content: center; }
-        .btn-primary { background: var(--gold-primary); color: var(--dark-bg); }
-        .btn-danger { background: var(--priority-high); color: white; border-color: var(--priority-high); }
-        .btn-secondary { background: transparent; color: var(--gold-primary); }
-        .btn:disabled { background: #333; border-color: #444; color: #777; cursor: not-allowed; }
-        .task-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.2rem 1rem; background: #1C1C1C; border-radius: 8px; margin-bottom: 1rem; border-left: 5px solid var(--text-secondary); }
-        .task-status-selector { background: var(--dark-secondary); color: var(--text-primary); border: 1px solid rgba(220, 202, 135, 0.2); border-radius: 5px; padding: 5px; font-family: 'Poppins', sans-serif; font-size: 0.9rem;}
-        .task-item.Urgent { border-left-color: var(--priority-high); }
-        .task-item.Important { border-left-color: var(--priority-medium); }
-        .task-item.Not-Important { border-left-color: var(--priority-low); }
-        .task-title { font-weight: 600; color: var(--text-primary); }
-        .role { font-weight: 600; text-transform: capitalize; }
-        .attendance-controls { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 2rem; }
-        .break-buttons { display: flex; gap: 10px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 2.5rem; }
-        .stat-card { background: #111; padding: 25px; border-radius: 15px; text-align: center; border-top: 3px solid var(--gold-primary); }
-        .stat-card h3 { font-family: 'Cormorant Garamond', serif; color: var(--gold-secondary); margin-bottom: 10px; font-size: 1.2rem; }
-        .stat-number { font-size: 2.5rem; font-weight: bold; color: var(--text-primary); display: block; margin-top: 10px; }
-        .performance-table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }
-        .performance-table th, .performance-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid rgba(220, 202, 135, 0.1); }
-        .performance-table th { color: var(--gold-primary); text-transform: uppercase; }
-        .performance-table .rank { font-weight: bold; font-size: 1.2rem; color: var(--gold-primary); }
-    </style>
-</head>
-<body>
-    <div id="app-root"></div>
-    <script type="module" src="app.js"></script>
 </body>
 </html>
