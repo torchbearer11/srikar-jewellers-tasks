@@ -12,7 +12,10 @@
     <div id="app-page">
         <div class="main-container">
             <header id="app-header" class="header">
-                <div class="header-text"><h1 id="header-title">Admin Dashboard</h1><p id="header-subtitle">Srikar Jewellers</p></div>
+                <div class="header-text">
+                    <h1 id="header-title">Admin Dashboard</h1>
+                    <p id="header-subtitle">Srikar Jewellers</p>
+                </div>
                 <nav id="header-nav">
                     <button class="btn nav-btn active" data-view="admin-dashboard-view">Dashboard</button>
                     <button class="btn nav-btn" data-view="admin-manage-staff-view">Manage Staff</button>
@@ -28,12 +31,15 @@
                             <div class="form-group"><label>Task Title</label><input type="text" id="task-title" required></div>
                             <div class="form-group"><label>Assign To</label><select id="task-assignee" required></select></div>
                             <div class="form-group"><label>Priority</label><select id="task-priority"><option value="Important">Important</option><option value="Urgent">Urgent</option><option value="Not Important">Not Important</option></select></div>
-                            <div class="form-group"><label>Deadline</label><input type="datetime-local" id="task-deadline" required></div>
+                            <div class="form-group"><label>Deadline (Optional)</label><input type="datetime-local" id="task-deadline"></div>
                         </form>
                         <div class="form-group"><label><input type="checkbox" id="task-recurring"> Daily Recurring Task</label></div>
                         <div style="text-align: center; margin-top: 1.5rem;"><button id="assign-task-button" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Assign Task</button></div>
                     </div>
-                    <div class="premium-card"><h2 class="section-title">All Active Tasks</h2><div id="admin-task-list"></div></div>
+                    <div class="premium-card">
+                        <h2 class="section-title">All Active Tasks</h2>
+                        <div id="admin-task-list"></div>
+                    </div>
                 </div>
                 <div id="admin-manage-staff-view" class="view hidden">
                     <div class="premium-card">
@@ -47,7 +53,10 @@
                     </div>
                 </div>
                 <div id="admin-performance-view" class="view hidden">
-                    <div class="premium-card"><h2 class="section-title">Staff Performance & Rankings</h2><div id="performance-table-container"></div></div>
+                    <div class="premium-card">
+                        <h2 class="section-title">Staff Performance & Rankings</h2>
+                        <div id="performance-table-container"></div>
+                    </div>
                 </div>
             </main>
         </div>
