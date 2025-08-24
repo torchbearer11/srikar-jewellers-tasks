@@ -1033,12 +1033,16 @@ function loadAdminTasks() {
     });
 }
 
+// --- CORRECTED STAFF TASK LOADER ---
 function loadStaffTasks(user) {
     if (!user) return;
-    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid), where('status', '!=', 'Completed'));
+    // **FIX**: Reverted to a simpler query that doesn't require a manual index.
+    const q = query(collection(db, 'tasks'), where('assignedToUID', '==', user.uid));
 
-    onSnapshot(q, snapshot => {
-        const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    onSnapshot(q, (snapshot) => {
+        const allTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Filter for incomplete tasks in the code instead of in the query
+        const tasks = allTasks.filter(task => task.status !== 'Completed');
 
         const now = new Date();
         const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1054,16 +1058,24 @@ function loadStaffTasks(user) {
                 return;
             }
             const deadlineDate = task.deadline.toDate();
-            if (deadlineDate < startOfToday) overdueTasks.push(task);
-            else if (deadlineDate >= startOfToday && deadlineDate <= endOfToday) todayTasks.push(task);
-            else upcomingTasks.push(task);
+            if (deadlineDate < startOfToday) {
+                overdueTasks.push(task);
+            } else if (deadlineDate >= startOfToday && deadlineDate <= endOfToday) {
+                todayTasks.push(task);
+            } else {
+                upcomingTasks.push(task);
+            }
         });
 
         renderPriorityGroupedTasks('today-tasks-container', todayTasks, "No tasks due today.");
         renderPriorityGroupedTasks('upcoming-tasks-container', upcomingTasks, "No upcoming tasks.");
         renderPriorityGroupedTasks('overdue-tasks-container', overdueTasks, "No overdue tasks. Great job!");
+    }, (error) => {
+        console.error("Error fetching staff tasks: ", error);
+        // Optionally, display an error message to the user
     });
 }
+
 
 function renderPriorityGroupedTasks(containerId, tasks, emptyMessage) {
     const container = document.getElementById(containerId);
